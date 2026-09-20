@@ -1,0 +1,34 @@
+{
+  "folders": [
+    {
+      "name": "pingmon",
+      "path": "."
+    }
+  ],
+  "settings": {
+    "files.encoding": "utf8",
+    "files.eol": "\n",
+    "editor.rulers": [79],
+    "editor.renderWhitespace": "boundary",
+    "python.analysis.typeCheckingMode": "basic",
+    "python.terminal.activateEnvironment": true,
+    "[python]": {
+      "editor.tabSize": 4,
+      "editor.insertSpaces": true
+    },
+    "[yaml]": {
+      "editor.tabSize": 2
+    },
+    "search.exclude": {
+      "**/pingmon-runs": true,
+      "**/__pycache__": true
+    }
+  },
+  "extensions": {
+    "recommendations": [
+      "ms-python.python",
+      "ms-python.vscode-pylance",
+      "redhat.vscode-yaml"
+    ]
+  }
+}

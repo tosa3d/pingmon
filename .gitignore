@@ -1,0 +1,26 @@
+# خروجی اجراها — داده‌ی خام تست، نباید وارد مخزن شود
+pingmon-runs/
+*.csv
+report.html
+
+# کانفیگ شخصی (ممکن است نام سرویس‌ها و IP خصوصی داشته باشد)
+pingmon.yaml
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+
+# ویرایشگر و سیستم‌عامل
+.vscode/*
+!.vscode/settings.json
+.idea/
+Thumbs.db
+desktop.ini
+.DS_Store

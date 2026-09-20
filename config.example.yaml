@@ -1,0 +1,118 @@
+# ============================================================================
+# pingmon — کانفیگ
+#
+# دو چیز را اینجا تعریف می‌کنی:
+#   1) services — سرویس‌های کاهش پینگی که می‌خواهی مقایسه کنی
+#   2) games    — بازی‌ها و ریجن‌هایی که رویشان بازی می‌کنی
+#
+# endpoint های زیر در ۲۰۲۶-۰۹ تست و تایید شده‌اند. قبل از اجرای طولانی،
+# یک‌بار `pingmon validate` بزن تا مطمئن شوی از خط تو هم پاسخ می‌دهند.
+# ============================================================================
+
+run:
+  block_seconds: 60        # طول هر بلوک اندازه‌گیری
+  settle_seconds: 8        # مکث بعد از عوض‌کردن سرویس (داده دور ریخته می‌شود)
+  rounds: 6                # هر سرویس چند بار تکرار شود — زیر ۴ نرو
+  rate_hz: 5               # پروب بر ثانیه به ازای هر مقصد
+  timeout: 2.0
+  randomize_order: true    # ترتیب سرویس‌ها در هر راند تصادفی شود
+  outdir: ./pingmon-runs
+
+# ---------------------------------------------------------------------------
+# سرویس‌ها
+#
+# mode: manual   → ابزار مکث می‌کند و می‌گوید «الان X را روشن کن»، Enter می‌زنی
+# mode: command  → ابزار خودش دستور را اجرا می‌کند (برای WireGuard/OpenVPN)
+#
+# دقیقاً یکی باید baseline: true باشد.
+# ---------------------------------------------------------------------------
+services:
+  - name: baseline
+    mode: manual
+    baseline: true
+    instruction: "همه‌ی سرویس‌های کاهش پینگ را کامل خاموش کن (اتصال مستقیم)"
+
+  - name: ExitLag
+    mode: manual
+    instruction: "ExitLag را روشن کن و روی بازی موردنظر اعمالش کن"
+
+  - name: NoPing
+    mode: manual
+    instruction: "ExitLag را ببند، NoPing را روشن کن"
+
+  # نمونه‌ی حالت خودکار — اگر تونلت CLI دارد:
+  # - name: wg-frankfurt
+  #   mode: command
+  #   up:   "wg-quick up frankfurt"
+  #   down: "wg-quick down frankfurt"
+
+# ---------------------------------------------------------------------------
+# بازی‌ها
+#
+# genre روی وزن‌دهی امتیاز اثر می‌گذارد:
+#   fps  → jitter و burst-loss وزن بیشتری دارند
+#   moba → میانگین پینگ وزن بیشتری دارد
+#
+# برای شروع، فقط ریجنی را که واقعاً رویش بازی می‌کنی فعال بگذار —
+# هرچه مقصد کمتر، نرخ پروب هر کدام بالاتر و داده تمیزتر.
+# ---------------------------------------------------------------------------
+games:
+
+  # ---- Rainbow Six Siege — روی Microsoft Azure ---------------------------
+  # اسم ریجن‌های R6 عیناً اسم ریجن‌های Azure است. ریجن فعلی‌ات را از
+  # داخل بازی ببین و فقط همان را (به‌علاوه یکی دو گزینه) فعال بگذار.
+  - name: r6
+    enabled: true
+    genre: fps
+    method: tcp
+    targets:
+      - { region: "UAE North",      host: "uaenorth.monitoring.azure.com" }
+      - { region: "West Europe",    host: "westeurope.monitoring.azure.com" }
+      - { region: "France Central", host: "francecentral.monitoring.azure.com" }
+      # - { region: "Poland Central", host: "polandcentral.monitoring.azure.com" }
+      # - { region: "Qatar Central",  host: "qatarcentral.monitoring.azure.com" }
+      # - { region: "UK South",       host: "uksouth.monitoring.azure.com" }
+
+  # ---- CS2 — Steam Datagram Relay ----------------------------------------
+  # IP رله‌های والو را با `pingmon sdr-refresh` بگیر و اینجا بچسبان.
+  # تا وقتی این کار را نکرده‌ای، این بازی را enabled: false بگذار.
+  - name: cs2
+    enabled: false
+    genre: fps
+    method: tcp
+    targets:
+      - { region: "fra", ip: "0.0.0.0", port: 27015, note: "با sdr-refresh پر کن" }
+
+  # ---- Apex Legends — Multiplay/i3D روی زیرساخت AWS ----------------------
+  - name: apex
+    enabled: true
+    genre: fps
+    method: tcp
+    targets:
+      - { region: "Bahrain",   host: "dynamodb.me-south-1.amazonaws.com" }
+      - { region: "Frankfurt", host: "dynamodb.eu-central-1.amazonaws.com" }
+      # - { region: "London",    host: "dynamodb.eu-west-2.amazonaws.com" }
+      # - { region: "Milan",     host: "dynamodb.eu-south-1.amazonaws.com" }
+
+  # ---- CoD Warzone — هاست مستندنشده --------------------------------------
+  # اینها تقریب خام‌اند. برای نتیجه‌ی قابل اتکا، وسط یک مچ
+  # `pingmon discover --game warzone` بزن و IP واقعی را اینجا بگذار.
+  - name: warzone
+    enabled: true
+    genre: fps
+    method: tcp
+    targets:
+      - { region: "EU Frankfurt (تقریبی)", host: "dynamodb.eu-central-1.amazonaws.com" }
+      - { region: "EU Amsterdam (تقریبی)", host: "europe-west4-run.googleapis.com" }
+
+  # ---- EA FC 26 -----------------------------------------------------------
+  # هشدار مهم: فقط مودهای سرور اختصاصی (Ultimate Team، Clubs، Rush، VOLTA)
+  # معنی دارند. مودهای Online Seasons و Friendlies نقطه‌به‌نقطه‌اند —
+  # هیچ سروری وسط نیست که مسیرش بهینه شود، پس تستشان بی‌معنی است.
+  - name: fc26
+    enabled: true
+    genre: moba          # lag compensation قوی‌تر ⇒ میانگین پینگ مهم‌تر
+    method: tcp
+    targets:
+      - { region: "EU West (تقریبی)",    host: "dynamodb.eu-west-1.amazonaws.com" }
+      - { region: "EU Central (تقریبی)", host: "dynamodb.eu-central-1.amazonaws.com" }
