@@ -1,14 +1,15 @@
 """
-targets.py — پایگاه داده‌ی مقصدهای پروب (حالت الف: بدون نیاز به نصب بازی)
+targets.py - probe destination catalog (mode A: no game install needed)
 
-هر بازی روی یک یا چند «ریجن» هاست می‌شه. ما به endpoint عمومیِ همون ریجن
-پروب می‌زنیم. هاپ آخر (داخل خود دیتاسنتر) معمولاً زیر ۱ms ـه، پس مسیر
-اینترنتی‌ای که سرویس کاهش پینگ روش اثر می‌ذاره همینه.
+Each game is hosted in one or more "regions". We probe a public endpoint in
+that same region. The last hop (inside the datacenter itself) is usually
+well under 1 ms, so what we measure is the internet path - which is exactly
+the part a ping-reduction service can change.
 
-الگوهای endpoint در ۲۰۲۶-۰۹ تست و تایید شدن:
-  Azure : {region}.monitoring.azure.com        (پوشش ۲۴/۲۴ ریجن)
-          {region}.api.cognitive.microsoft.com (فالبک)
-  AWS   : dynamodb.{region}.amazonaws.com      (همون روشی که cloudping می‌زنه)
+Endpoint patterns verified 2026-09:
+  Azure : {region}.monitoring.azure.com        (24/24 regions resolve)
+          {region}.api.cognitive.microsoft.com (fallback)
+  AWS   : dynamodb.{region}.amazonaws.com      (same trick cloudping uses)
   GCP   : {region}-run.googleapis.com
 """
 
@@ -44,15 +45,15 @@ def gcp(region: str) -> str:
 
 @dataclass
 class Target:
-    """یک مقصد پروب."""
+    """A single probe destination."""
 
-    game: str            # "r6"، "cs2"، ...
-    region: str          # برچسب خوانا: "UAE North"
-    host: str            # hostname یا IP
+    game: str            # "r6", "cs2", ...
+    region: str          # human label: "UAE North"
+    host: str            # hostname or IP
     port: int = 443
     method: str = "tcp"  # tcp | icmp | a2s
     note: str = ""
-    genre: str = "fps"   # fps | moba  → روی وزن‌دهی امتیاز اثر داره
+    genre: str = "fps"   # fps | moba -> changes score weighting
     ip: str | None = field(default=None, compare=False)
 
     @property
@@ -60,7 +61,7 @@ class Target:
         return f"{self.game}/{self.region}"
 
     def resolve(self, timeout: float = 5.0) -> str | None:
-        """hostname را یک‌بار به IP تبدیل می‌کند تا DNS وارد اندازه‌گیری نشود."""
+        """Resolve the hostname once so DNS never enters a measurement."""
         if self.ip:
             return self.ip
         try:
@@ -77,10 +78,10 @@ class Target:
 
 
 # ---------------------------------------------------------------- catalog
-# ریجن‌هایی که برای کاربر خاورمیانه/ایران منطقی‌ان، اول لیست.
+# Regions that make sense from the Middle East / Iran come first.
 
-#: Rainbow Six Siege — روی Microsoft Azure هاست می‌شه و اسم ریجن‌هاش
-#: عیناً اسم ریجن‌های Azure ـه (uaenorth، westeurope، ...).
+#: Rainbow Six Siege runs on Microsoft Azure, and its in-game region names
+#: are literally Azure region names (uaenorth, westeurope, ...).
 R6_REGIONS = [
     ("UAE North",      "uaenorth"),
     ("West Europe",    "westeurope"),
@@ -94,19 +95,20 @@ R6_REGIONS = [
     ("East US",        "eastus"),
 ]
 
-#: Apex Legends — Multiplay/i3D + AWS. به ریجن ابری معادل پروب می‌زنیم.
+#: Apex Legends - Multiplay/i3D on top of AWS. We probe the matching
+#: cloud region as a stand-in.
 APEX_REGIONS = [
-    ("Bahrain (me-south-1)",   aws("me-south-1")),
-    ("UAE (me-central-1)",     aws("me-central-1")),
+    ("Bahrain (me-south-1)",     aws("me-south-1")),
+    ("UAE (me-central-1)",       aws("me-central-1")),
     ("Frankfurt (eu-central-1)", aws("eu-central-1")),
-    ("Ireland (eu-west-1)",    aws("eu-west-1")),
-    ("London (eu-west-2)",     aws("eu-west-2")),
-    ("Milan (eu-south-1)",     aws("eu-south-1")),
-    ("Stockholm (eu-north-1)", aws("eu-north-1")),
+    ("Ireland (eu-west-1)",      aws("eu-west-1")),
+    ("London (eu-west-2)",       aws("eu-west-2")),
+    ("Milan (eu-south-1)",       aws("eu-south-1")),
+    ("Stockholm (eu-north-1)",   aws("eu-north-1")),
 ]
 
-#: CoD Warzone — هاست ترکیبی و مستند نشده. اینها تقریب خام‌ان؛
-#: برای نتیجه‌ی دقیق از `pingmon discover` استفاده کن.
+#: CoD Warzone - mixed, undocumented hosting. These are rough stand-ins;
+#: use `pingmon discover` for the real thing.
 WARZONE_REGIONS = [
     ("EU (Frankfurt approx)", aws("eu-central-1")),
     ("EU (Amsterdam approx)", gcp("europe-west4")),
@@ -114,17 +116,16 @@ WARZONE_REGIONS = [
     ("ME (Bahrain approx)",   aws("me-south-1")),
 ]
 
-#: EA FC 26 — فقط مودهای سرور اختصاصی (FUT / Clubs / Rush / VOLTA).
-#: مودهای Seasons و Friendlies نقطه‌به‌نقطه‌ان و اینجا معنی ندارن.
+#: EA FC 26 - dedicated-server modes only (FUT / Clubs / Rush / VOLTA).
+#: Online Seasons and Friendlies are peer-to-peer and meaningless here.
 FC_REGIONS = [
-    ("EU West (approx)",   aws("eu-west-1")),
+    ("EU West (approx)",    aws("eu-west-1")),
     ("EU Central (approx)", aws("eu-central-1")),
-    ("ME (approx)",        aws("me-south-1")),
+    ("ME (approx)",         aws("me-south-1")),
 ]
 
-#: CS2 — Steam Datagram Relay. کدهای PoP والو.
-#: لیست معتبر رو `pingmon sdr-refresh` زنده از والو می‌گیره؛
-#: این فقط فالبک آفلاینه.
+#: CS2 uses Steam Datagram Relay. `pingmon sdr-refresh` fetches the live
+#: list from Valve; this is only an offline fallback.
 VALVE_POP_FALLBACK = {
     "fra": "Frankfurt",
     "vie": "Vienna",
@@ -145,11 +146,11 @@ SDR_CONFIG_URL = "https://api.steampowered.com/ISteamApps/GetSDRConfig/v1/?appid
 
 def fetch_sdr_pops(timeout: float = 15.0) -> dict[str, list[str]]:
     """
-    کانفیگ زنده‌ی Steam Datagram Relay را از والو می‌گیرد و
-    {pop_code: [relay_ip, ...]} برمی‌گرداند.
+    Fetch Valve's live Steam Datagram Relay config and return
+    {pop_code: [relay_ip, ...]}.
 
-    روی سیستم خودت کار می‌کند؛ اگر شبکه اجازه نداد، خطا می‌دهد و
-    باید از لیست فالبک یا IP دستی استفاده کنی.
+    Works from a normal connection; if the network blocks it, fall back to
+    the offline list or enter a relay IP by hand.
     """
     req = urllib.request.Request(
         SDR_CONFIG_URL, headers={"User-Agent": "pingmon/1.0"}
@@ -177,7 +178,7 @@ def build_default_targets(
     sdr_pops: dict[str, list[str]] | None = None,
     max_per_game: int = 4,
 ) -> list[Target]:
-    """مجموعه‌ی پیش‌فرض مقصدها را می‌سازد."""
+    """Build the built-in default target set."""
     games = games or ["r6", "cs2", "apex", "warzone", "fc26"]
     out: list[Target] = []
 
@@ -196,13 +197,14 @@ def build_default_targets(
     if "warzone" in games:
         for label, host in WARZONE_REGIONS[:max_per_game]:
             out.append(Target("warzone", label, host, 443, "tcp",
-                              note="تقریبی — discover توصیه می‌شود",
+                              note="approximate - discover recommended",
                               genre="fps"))
 
     if "fc26" in games:
         for label, host in FC_REGIONS[:max_per_game]:
             out.append(Target("fc26", label, host, 443, "tcp",
-                              note="فقط مودهای سرور اختصاصی", genre="moba"))
+                              note="dedicated-server modes only",
+                              genre="moba"))
 
     if "cs2" in games:
         if sdr_pops:
@@ -215,15 +217,15 @@ def build_default_targets(
                 )
         else:
             out.append(
-                Target("cs2", "SDR (نیاز به sdr-refresh)", "", 27015, "tcp",
-                       note="`pingmon sdr-refresh` را اجرا کن", genre="fps")
+                Target("cs2", "SDR (run sdr-refresh)", "", 27015, "tcp",
+                       note="run `pingmon sdr-refresh` first", genre="fps")
             )
 
     return out
 
 
 def targets_from_config(cfg: dict) -> list[Target]:
-    """مقصدها را از فایل کانفیگ می‌سازد."""
+    """Build the target list from a config file."""
     out: list[Target] = []
     for game_cfg in cfg.get("games") or []:
         if not game_cfg.get("enabled", True):

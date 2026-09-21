@@ -1,215 +1,229 @@
 # pingmon
 
-مانیتورینگ و تست سرویس‌های کاهش پینگ — **بازی‌به‌بازی، سرویس‌به‌سرویس**.
+Monitor and test ping-reduction services — **game by game, service by service**.
 
-اندازه می‌گیرد که هر سرویس روی هر بازی چه اثری دارد، و با تحلیل آماری
-می‌گوید آن اثر واقعی است یا فقط نویز شبکه.
-
----
-
-## چرا این و نه یک سایت آماده
-
-سایت‌های عمومی پینگ، RTT تو را **به سرور خودشان** می‌سنجند، نه به سرور
-بازی. مهم‌تر: بیشتر سرویس‌های کاهش پینگ split-tunnel هستند و فقط ترافیک
-پروسه‌ی بازی را از تونل رد می‌کنند — پس ترافیک مرورگر اصلاً وارد تونل
-نمی‌شود و آن عدد چیزی را اندازه نمی‌گیرد.
-
-این ابزار به **ریجن واقعی هر بازی** پروب می‌زند، از **خط خودت**، و
-سرویس‌ها را **متناوب** مقایسه می‌کند تا نوسان شبکه وارد نتیجه نشود.
+It measures what each service actually does to each game, then uses statistics
+to say whether that effect is real or just network noise.
 
 ---
 
-## نصب
+## Why this and not a website
 
-نیاز: Python 3.10 به بالا.
+Public ping-test sites measure your RTT **to their own server**, not to the
+game server. Worse: most ping-reduction services use split tunnelling and only
+route the game process through the tunnel — so your browser traffic never
+enters it at all, and that number measures nothing.
+
+This tool probes the **real region each game runs in**, from **your own line**,
+and compares services **interleaved** so network drift cannot leak into the
+result.
+
+---
+
+## Install
+
+Requires Python 3.10+.
 
 ```bash
 pip install -r requirements.txt      # rich + pyyaml
 ```
 
-روی ویندوز و لینوکس یکسان کار می‌کند. پروب پیش‌فرض TCP است و **نیاز به
-دسترسی ادمین ندارد**.
+Works identically on Windows and Linux. The default probe is TCP and needs
+**no admin rights**.
+
+### Windows one-click
+
+Double-click `1-VALIDATE.bat`. It finds Python, builds a virtualenv, installs
+the dependencies, creates the config and runs a health check — writing
+everything to `last-run.txt`. Then:
+
+```
+2-MONITOR.bat    live dashboard
+3-RUN-TEST.bat   full A/B test + HTML report
+4-SDR-CS2.bat    fetch Valve relay IPs for CS2
+```
 
 ---
 
-## شروع سریع
+## Quick start
 
 ```bash
-python -m pingmon init          # ساخت pingmon.yaml
-python -m pingmon validate      # کدام مقصدها واقعاً پاسخ می‌دهند؟
-python -m pingmon monitor       # فقط تماشا — داشبورد زنده
-python -m pingmon run           # تست کامل A/B
+python -m pingmon init          # writes pingmon.yaml
+python -m pingmon validate      # which targets actually respond?
+python -m pingmon monitor       # watch only - live dashboard
+python -m pingmon run           # the full A/B test
 ```
 
-قبل از `run`، فایل `pingmon.yaml` را باز کن و سرویس‌هایت را بنویس
-(ExitLag، NoPing، هرچه تست می‌کنی). دقیقاً یکی باید `baseline: true` باشد.
+Before `run`, open `pingmon.yaml` and list the services you want to compare.
+Exactly one must be marked `baseline: true`.
 
 ---
 
-## دستورها
+## Commands
 
-| دستور | کار |
+| Command | What it does |
 |---|---|
-| `init` | ساخت فایل کانفیگ نمونه |
-| `validate` | بررسی DNS و پاسخ‌دهی همه‌ی مقصدها |
-| `monitor` | داشبورد زنده، بدون تست — برای دیدن وضعیت لحظه‌ای |
-| `run` | تست کامل A/B متناوب + گزارش HTML |
-| `discover` | شکار IP واقعی سرور بازی (وسط مچ اجرا کن) |
-| `sdr-refresh` | گرفتن لیست زنده‌ی PoPهای Valve برای CS2 |
-| `report DIR` | ساخت دوباره‌ی گزارش از روی CSV |
+| `init` | Write an example config |
+| `validate` | Check DNS and reachability for every target |
+| `monitor` | Live dashboard, no test — for watching the current state |
+| `run` | Full interleaved A/B test + HTML report |
+| `discover` | Capture a game's real server IP (run mid-match) |
+| `sdr-refresh` | Fetch the live Valve SDR relay list for CS2 |
+| `report DIR` | Rebuild the HTML report from CSV |
 
 ---
 
-## روش کار — چرا نتیجه قابل اعتماد است
+## Method — why the result is trustworthy
 
-### تست متناوب، نه متوالی
+### Interleaved, not sequential
 
-اگر ۱۰ دقیقه سرویس A را تست کنی و بعد ۱۰ دقیقه B را، داری **نوسان شبکه**
-را اندازه می‌گیری نه سرویس را. به‌جایش بلوک‌های کوتاه می‌چرخند:
+Testing service A for 10 minutes and then B for 10 minutes measures **network
+drift**, not the services. Instead, short blocks rotate:
 
 ```
-راند ۱:  baseline → ExitLag → NoPing
-راند ۲:  NoPing → baseline → ExitLag       ← ترتیب تصادفی
-راند ۳:  ExitLag → NoPing → baseline
+round 1:  baseline -> ExitLag -> NoPing
+round 2:  NoPing -> baseline -> ExitLag       <- order randomised
+round 3:  ExitLag -> NoPing -> baseline
 ...
 ```
 
-هر سرویس با خط‌پایه **در همان راند** جفت می‌شود، پس drift شبکه بین
-ساعت‌ها خنثی می‌شود.
+Each service is paired against the baseline **from the same round**, so drift
+between hours cancels out.
 
-### فاز نشست
+### Settle phase
 
-بعد از هر تغییر سرویس، ۸ ثانیه اول دور ریخته می‌شود تا اثر گذرای
-بالاآمدن تونل وارد اندازه‌گیری نشود.
+After every service switch, the first 8 seconds are discarded so the transient
+of the tunnel coming up never enters the measurement.
 
-### تحلیل آماری
+### Statistics
 
-واحد تحلیل **بلوک** است نه نمونه (نمونه‌های داخل یک بلوک به‌شدت
-همبسته‌اند). اختلاف‌های جفت‌شده با bootstrap (۴۰۰۰ بازنمونه) و بازه
-اطمینان ۹۵٪ بررسی می‌شوند. اگر بازه صفر را در بر بگیرد، حکم
-**«بدون تفاوت معنی‌دار»** است.
+The unit of analysis is the **block**, not the sample — samples inside a block
+are heavily correlated. Paired differences go through a bootstrap (4000
+resamples) with a 95% confidence interval. If that interval spans zero, the
+verdict is **"no significant difference"**.
 
-> آن حکم یک شکست نیست — یک نتیجه‌ی معتبر است. یعنی آن سرویس برای آن
-> مسیر ارزش پول را ندارد.
+> That verdict is not a failure — it is a valid result. It means the service is
+> not worth its price on that route.
 
 ---
 
-## متریک‌ها
+## Metrics
 
-| متریک | یعنی چه | عالی | قابل‌قبول | بد |
+| Metric | Meaning | Excellent | Acceptable | Bad |
 |---|---|---|---|---|
-| `p50` | میانه‌ی RTT، «پینگ معمولت» | < ۵۰ms | ۵۰–۹۰ | > ۱۲۰ |
-| `jitter` | میانگین اختلاف دو پینگ پشت‌سرهم (IPDV) | < ۵ms | ۵–۱۵ | > ۲۰ |
-| `spike` | `p99 − p50`، ارتفاع پرش‌ها | < ۲۰ms | ۲۰–۵۰ | > ۸۰ |
-| `loss` | درصد بسته‌ی گم‌شده | < ۰.۱٪ | ۰.۱–۱٪ | > ۲٪ |
-| `brst` | طولانی‌ترین رشته‌ی گم‌شدن پشت‌سرهم | ≤ ۱ | ۲–۳ | ≥ ۵ |
+| `p50` | median RTT, "your normal ping" | < 50 ms | 50–90 | > 120 |
+| `jitter` | mean difference between consecutive pings (IPDV) | < 5 ms | 5–15 | > 20 |
+| `spike` | `p99 − p50`, how tall the jumps are | < 20 ms | 20–50 | > 80 |
+| `loss` | percentage of lost packets | < 0.1% | 0.1–1% | > 2% |
+| `brst` | longest run of consecutive losses | ≤ 1 | 2–3 | ≥ 5 |
 
-**burst loss مهم‌ترین متریکی است که اکثر ابزارها نمی‌سنجند.** یک درصد
-loss پراکنده تقریباً حس نمی‌شود؛ همان یک درصد به شکل رشته‌های ۵ تایی،
-هر بار یک فریز واضح است.
+**Burst loss is the metric most tools never measure.** 1% loss scattered evenly
+is barely noticeable; the same 1% arriving as runs of five is a visible freeze
+every time.
 
-### امتیاز بازی (`score`)
+### Game score
 
-عدد ۰ تا ۱۰۰ که همه‌ی متریک‌ها را با وزن ژانر ترکیب می‌کند:
+A 0–100 number combining all metrics, weighted by genre:
 
-- `genre: fps` — jitter و burst وزن بیشتر (پینگ ۷۰ ثابت بهتر از ۴۵ پرنوسان)
-- `genre: moba` — میانگین پینگ وزن بیشتر (lag compensation قوی‌تر است)
+- `genre: fps` — jitter and burst weigh more (a steady 70 ms beats a jumpy 45)
+- `genre: moba` — average ping weighs more (lag compensation is stronger)
 
-برای **رتبه‌بندی نسبی سرویس‌ها** ساخته شده، نه به‌عنوان یک عدد مطلق.
+It exists to **rank services against each other**, not as an absolute standard.
 
 ---
 
-## مقصدها به تفکیک بازی
+## Targets by game
 
-| بازی | هاستینگ | وضعیت | توضیح |
+| Game | Hosting | Status | Notes |
 |---|---|---|---|
-| **Rainbow Six Siege** | Microsoft Azure | ✅ آماده | اسم ریجن‌های R6 عیناً اسم ریجن‌های Azure است |
-| **Apex Legends** | Multiplay/i3D + AWS | ✅ آماده | خود بازی هم لیست دیتاسنترها با پینگ را نشان می‌دهد |
-| **CS2** | Steam Datagram Relay | ⚙️ `sdr-refresh` | IP رله‌های والو را بگیر و در کانفیگ بگذار |
-| **CoD Warzone** | مستند نشده | ⚠️ تقریبی | برای دقت، `discover` را وسط مچ بزن |
-| **EA FC 26** | بسته به مود | ⚠️ فقط FUT | پایین را بخوان |
+| **Rainbow Six Siege** | Microsoft Azure | Ready | R6's region names are literally Azure region names |
+| **Apex Legends** | Multiplay/i3D + AWS | Ready | The game also shows a datacenter list with live pings |
+| **CS2** | Steam Datagram Relay | Run `sdr-refresh` | Fetch Valve's relay IPs into your config |
+| **CoD Warzone** | Undocumented | Approximate | Use `discover` mid-match for accuracy |
+| **EA FC 26** | Mode-dependent | FUT only | See below |
 
-### هشدار EA FC 26
+### EA FC 26 warning
 
-FC 26 دو نوع کانکشن کاملاً متفاوت دارد:
+FC 26 has two completely different connection types:
 
-| مود | کانکشن | سرویس کاهش پینگ اثر دارد؟ |
+| Mode | Connection | Can a ping service help? |
 |---|---|---|
-| Ultimate Team (Rivals, Champs, Draft)، Clubs، Rush، VOLTA | سرور اختصاصی | ✅ بله |
-| Online Seasons، Friendlies، Co-op Seasons | **P2P** | ❌ تقریباً نه |
+| Ultimate Team (Rivals, Champs, Draft), Clubs, Rush, VOLTA | Dedicated server | Yes |
+| Online Seasons, Friendlies, Co-op Seasons | **Peer-to-peer** | Essentially no |
 
-در مودهای P2P هیچ سروری وسط نیست که مسیرش بهینه شود — ترافیک مستقیم به
-خانه‌ی حریف می‌رود. اگر بیشتر Seasons بازی می‌کنی، تست کردن بی‌معنی است.
+In P2P modes there is no server in the middle whose route could be optimised —
+traffic goes straight to your opponent's house. If you mostly play Seasons,
+testing is pointless.
 
 ---
 
-## حالت ب — IP واقعی سرور
+## Mode B — the real server IP
 
-حالت پیش‌فرض (پروب به ریجن) حدود ۸۰٪ دقت دارد و برای تصمیم خرید کافی
-است. اگر نتیجه مبهم بود (اختلاف زیر ۱۰ms)، برو سراغ IP واقعی:
+The default (probing the region) is roughly 80% accurate and plenty for a
+buy-or-not decision. If the result is ambiguous (under 10 ms apart), go get the
+real IP:
 
 ```bash
-# وسط یک مچ واقعی، در یک ترمینال دیگر:
+# mid-match, in another terminal:
 python -m pingmon discover --game warzone --seconds 30
 ```
 
-جدول اتصالات سیستم‌عامل را می‌خواند (`netstat -ano` روی ویندوز،
-`ss -tunp` روی لینوکس)، مقصدهای پایدار UDP را رتبه‌بندی می‌کند و یک خط
-آماده می‌دهد که در کانفیگ بچسبانی.
+It reads the OS connection table (`netstat -ano` on Windows, `ss -tunp` on
+Linux), ranks the stable UDP destinations, and prints a config line ready to
+paste.
 
-کاملاً passive است — هیچ hook یا inject ای در کار نیست، پس با آنتی‌چیت
-مشکلی ندارد.
+Entirely passive — nothing is hooked or injected, so it is safe with anti-cheat.
 
 ---
 
-## خروجی‌ها
+## Output
 
-هر اجرا یک پوشه می‌سازد:
+Each run creates a folder:
 
 ```
 pingmon-runs/run-20260920-143022/
-├── samples.csv    هر پروب، تک‌تک — برای تحلیل خودت
-├── blocks.csv     خلاصه‌ی هر بلوک — ورودی گزارش
-└── report.html    گزارش نهایی
+├── samples.csv    every single probe — for your own analysis
+├── blocks.csv     per-block summary — the report's input
+└── report.html    the final report
 ```
 
-گزارش خودکفاست (بدون وابستگی خارجی)، فارسی و راست‌به‌چپ، با حالت تیره،
-و پالتش برای کوررنگی اعتبارسنجی شده است.
+The report is self-contained (no external dependencies), has a dark mode, and
+its colour palette is validated for colour-vision deficiency.
 
 ---
 
-## محدودیت‌هایی که باید بدانی
+## What these numbers cannot tell you
 
-1. **پروب TCP/ICMP دقیقاً ترافیک بازی نیست.** بعضی سرورها آن را drop یا
-   rate-limit می‌کنند.
+1. **A TCP/ICMP probe is not literally game traffic.** Some servers drop or
+   rate-limit it.
 
-2. **مشکل split tunnel — مهم‌ترین نکته.** اگر سرویس فقط پروسه‌ی بازی را
-   از تونل رد کند، این ابزار ممکن است اصلاً از تونل عبور نکند و عملاً
-   هیچ چیز را اندازه نگیرد. راه حل: یا سرویس را full-tunnel کن، یا
-   `python.exe` را دستی به لیست پروسه‌های سرویس اضافه کن. یک‌بار صحتش را
-   بررسی کن، وگرنه کل نتیجه بی‌اعتبار است.
+2. **Split tunnelling — the big one.** If a service only routes the game
+   process, this tool may never go through the tunnel and would therefore
+   measure nothing. Fix: use full-tunnel mode, or add the Python executable to
+   the service's process list. Verify this once — otherwise the whole run is
+   worthless.
 
-3. **زمان مهم است.** اعداد فقط برای خط تو در همان ساعت‌ها معتبرند. یک
-   اجرا ساعت پیک شب، یک اجرا آف‌پیک.
+3. **Time of day matters.** The numbers are valid for your line at those hours
+   only. Do one run at peak and one off-peak.
 
-4. **tickrate و lag compensation اندازه‌گیری نمی‌شوند.** آنچه حین گیم حس
-   می‌کنی فقط شبکه نیست.
+4. **Tickrate and lag compensation are not measured.** What you feel in game is
+   not only the network.
 
-5. **عدد پینگ داخل بازی ground truth است.** بعد از گزارش، یک مچ با برنده
-   و یک مچ بدون آن بازی کن و مقایسه کن. اگر هم‌جهت بودند، به نتیجه
-   اعتماد کن.
+5. **The in-game ping counter is the ground truth.** After the report, play one
+   match with the winner and one without, and compare. If they agree, trust the
+   result.
 
 ---
 
-## تنظیم طول اجرا
+## Tuning run length
 
-پیش‌فرض ۶ راند × ۳ سرویس × ۶۰ ثانیه ≈ ۲۵ دقیقه (بدون مکث‌های دستی).
+The default is 6 rounds × 3 services × 60 s ≈ 25 minutes, excluding manual
+pauses.
 
-- **زیر ۴ راند نرو** — بازه اطمینان آن‌قدر پهن می‌شود که هیچ چیز معنی‌دار
-  در نمی‌آید.
-- برای نتیجه‌ی محکم: ۸ تا ۱۰ راند.
-- هرچه مقصد کمتر، داده تمیزتر. فقط ریجنی را فعال بگذار که واقعاً رویش
-  بازی می‌کنی.
+- **Do not go below 4 rounds** — the confidence interval gets so wide that
+  nothing comes out significant.
+- For a solid result: 8–10 rounds.
+- Fewer targets means cleaner data. Enable only the region you actually play on.
 
 ```bash
 python -m pingmon run --rounds 10 --block 90
@@ -217,16 +231,16 @@ python -m pingmon run --rounds 10 --block 90
 
 ---
 
-## ساختار
+## Layout
 
 ```
 pingmon/
-├── targets.py     پایگاه ریجن‌ها + دریافت زنده‌ی SDR والو
-├── probe.py       پروب TCP / ICMP / A2S با نرخ ثابت
-├── stats.py       متریک‌ها، امتیاز، bootstrap جفت‌شده
-├── session.py     زمان‌بند A/B، لاگ CSV
-├── dashboard.py   داشبورد زنده‌ی ترمینال
-├── report.py      گزارش HTML + نمودارهای SVG
-├── discover.py    شکار IP سرور بازی
-└── cli.py         نقطه ورود
+├── targets.py     region catalog + live Valve SDR fetch
+├── probe.py       fixed-rate TCP / ICMP / A2S probing
+├── stats.py       metrics, score, paired bootstrap
+├── session.py     the A/B scheduler and CSV logging
+├── dashboard.py   live terminal dashboard
+├── report.py      HTML report + inline SVG charts
+├── discover.py    game server IP capture
+└── cli.py         entry point
 ```

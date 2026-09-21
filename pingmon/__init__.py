@@ -1,3 +1,3 @@
-"""pingmon — تست و مانیتورینگ سرویس‌های کاهش پینگ، بازی‌به‌بازی."""
+"""pingmon - test and monitor ping-reduction services, game by game."""
 
-__version__ = "1.0.0"
+__version__ = "1.1.0"

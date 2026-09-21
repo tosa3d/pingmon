@@ -1,14 +1,14 @@
 """
-discover.py — شکار IP واقعی سرور بازی (حالت ب)
+discover.py - capture a game's real server IP (mode B)
 
-وسط یک مچ واقعی اجرا کن. کانکشن‌های UDP پروسه‌ی بازی را از سیستم‌عامل
-می‌خواند و مقصدهای عمومی را بیرون می‌کشد.
+Run this mid-match. It reads the game process's UDP connections straight
+from the operating system and pulls out the public destinations.
 
-ویندوز : netstat -ano  +  tasklist  (بدون نیاز به ابزار اضافه)
-لینوکس : ss -tunp      (یا netstat -tunp به‌عنوان فالبک)
+Windows : netstat -ano  +  tasklist  (no extra tooling needed)
+Linux   : ss -tunp      (netstat -tunp as a fallback)
 
-هیچ hook یا inject ای در کار نیست — فقط خواندن جدول اتصالات سیستم‌عامل،
-که کاملاً passive است و با آنتی‌چیت مشکلی ندارد.
+Nothing is hooked or injected - this only reads the OS connection table,
+which is entirely passive and safe with anti-cheat.
 """
 
 from __future__ import annotations
@@ -20,7 +20,7 @@ import subprocess
 from collections import Counter
 from dataclasses import dataclass
 
-#: نام پروسه‌ها به تفکیک بازی
+#: Process names per game
 GAME_PROCESSES = {
     "r6":      ["RainbowSix.exe", "RainbowSix_BE.exe", "RainbowSix_Vulkan.exe"],
     "cs2":     ["cs2.exe", "cs2"],
@@ -148,8 +148,9 @@ def snapshot() -> list[Endpoint]:
 def collect(seconds: int = 20, interval: float = 2.0,
             game: str | None = None, on_tick=None) -> list[Endpoint]:
     """
-    چند بار نمونه می‌گیرد و مقصدهایی که مکرراً دیده می‌شوند را
-    برمی‌گرداند — سرور بازی در طول مچ پایدار است، بقیه گذرا.
+    Samples repeatedly and returns destinations that keep showing up -
+    the game server is stable for the whole match, everything else is
+    transient.
     """
     import time
 
@@ -179,8 +180,8 @@ def collect(seconds: int = 20, interval: float = 2.0,
 
 def rank(endpoints: list[Endpoint]) -> list[Endpoint]:
     """
-    مرتب‌سازی بر اساس احتمال «سرور بازی بودن»:
-    UDP پایدار روی پورت غیر وب  >  بقیه.
+    Rank by how likely each endpoint is to be the game server:
+    a stable UDP flow on a non-web port beats everything else.
     """
     def score(e: Endpoint) -> tuple:
         udp = e.proto == "UDP"

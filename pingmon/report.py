@@ -1,21 +1,21 @@
 """
-report.py — گزارش HTML خودکفا با تحلیل آماری
+report.py - self-contained HTML report with statistical analysis
 
-واحد تحلیل «مسیر» است: هر جفت (بازی، ریجن). برای هر مسیر، هر سرویس با
-خط‌پایه **در همان راند** جفت می‌شود و اختلاف با بوت‌استرپ و بازه اطمینان
-۹۵٪ گزارش می‌شود. اگر بازه صفر را در بر بگیرد، حکم «بدون تفاوت معنی‌دار»
-است — که خودش یک نتیجه‌ی معتبر و مهم است.
+The unit of analysis is the ROUTE: each (game, region) pair. For every
+route, each service is paired against the baseline FROM THE SAME ROUND,
+and the difference is reported with a bootstrap 95% confidence interval.
+If that interval spans zero, the verdict is "no significant difference" -
+which is a real and useful result, not a failure.
 
-نمودارها SVG درون‌خطی‌اند: بدون وابستگی خارجی، در حالت روشن و تیره
-اعتبارسنجی‌شده، و همیشه در کنار جدول متناظرشان (جدول نقش table view را
-برای رنگ‌های کم‌کنتراست حالت روشن بازی می‌کند).
+Charts are inline SVG: no external dependencies, validated for both light
+and dark mode, and always beside their matching table (the table doubles
+as the table-view relief for the low-contrast light-mode hues).
 """
 
 from __future__ import annotations
 
 import csv
 import html
-import json
 import math
 import statistics
 import time
@@ -25,20 +25,20 @@ from pathlib import Path
 from .stats import compare_service, percentile
 
 # ---------------------------------------------------------------- palette
-# اسلات‌های categorical از پالت مرجع، اعتبارسنجی‌شده:
-#   light adjacent — CVD ΔE 9.1 · normal ΔE 19.6
-#   dark  adjacent — CVD ΔE 8.4 · normal ΔE 19.3
+# Categorical slots from the reference palette, validated:
+#   light adjacent - CVD dE 9.1 / normal dE 19.6
+#   dark  adjacent - CVD dE 8.4 / normal dE 19.3
 SERIES_LIGHT = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100",
                 "#e87ba4", "#008300", "#4a3aa7", "#e34948"]
 SERIES_DARK = ["#3987e5", "#d95926", "#199e70", "#c98500",
                "#d55181", "#008300", "#9085e9", "#e66767"]
 
 METRIC_LABEL = {
-    "p50": "میانه پینگ (ms)",
-    "jitter": "جیتر (ms)",
-    "spike": "اسپایک p99−p50 (ms)",
-    "loss_pct": "پکت لاس (٪)",
-    "score": "امتیاز بازی",
+    "p50": "median ping (ms)",
+    "jitter": "jitter (ms)",
+    "spike": "spike, p99 minus p50 (ms)",
+    "loss_pct": "packet loss (%)",
+    "score": "game score",
 }
 LOWER_IS_BETTER = {"p50": True, "jitter": True, "spike": True,
                    "loss_pct": True, "score": False}
@@ -137,12 +137,6 @@ def _esc(s) -> str:
     return html.escape(str(s), quote=True)
 
 
-#: LRI … PDI — یک عدد علامت‌دار را داخل متن راست‌به‌چپ ایزوله می‌کند،
-#: وگرنه مرورگر «−۱۸.۴» را «۱۸.۴−» نمایش می‌دهد.
-def _ltr(s: str) -> str:
-    return f"⁦{s}⁩"
-
-
 def _nice_ticks(lo: float, hi: float, count: int = 5) -> list[float]:
     if not math.isfinite(lo) or not math.isfinite(hi) or hi <= lo:
         return [0.0, 1.0]
@@ -157,8 +151,8 @@ def _nice_ticks(lo: float, hi: float, count: int = 5) -> list[float]:
     while v <= hi + step * 0.5:
         ticks.append(round(v, 10))
         v += step
-    # محور باید همیشه بزرگ‌ترین مقدار را در بر بگیرد، وگرنه میله از
-    # بالای نمودار بیرون می‌زند و روی legend می‌افتد.
+    # The axis must always cover the largest value, or a bar overshoots
+    # the top of the plot and lands on the legend.
     while ticks[-1] < hi:
         ticks.append(round(ticks[-1] + step, 10))
     return ticks
@@ -169,20 +163,21 @@ def grouped_bars(title: str, groups: list[str], series: list[str],
                  unit: str = "", lower_better: bool = True,
                  height: int = 260) -> str:
     """
-    نمودار میله‌ای گروهی. x = ریجن، رنگ = سرویس.
-    برچسب مستقیم روی هر میله (الزام relief برای کنتراست پایین حالت روشن).
+    Grouped bar chart. x = region, colour = service.
+    Every bar is directly labelled (the relief rule for the low-contrast
+    light-mode hues).
     """
-    # pad_t باید جا برای برچسب مقدارِ بالای بلندترین میله بگذارد.
+    # pad_t must leave room for the value label above the tallest bar.
     pad_l, pad_r, pad_t, pad_b = 58, 18, 30, 52
-    # عرض ثابت ۷۰۰ مثل بقیه‌ی نمودارها: اگر viewBox باریک باشد، مرورگر
-    # آن را تا عرض ظرف بزرگ می‌کند و میله‌ها غیرعادی پهن می‌شوند.
+    # Fixed 700 width like the other charts: a narrow viewBox gets scaled
+    # up to the container width and the bars look absurdly fat.
     width = max(700, 120 * max(len(groups), 1))
     plot_w = width - pad_l - pad_r
     plot_h = height - pad_t - pad_b
 
     finite = [v for v in values.values() if math.isfinite(v)]
     if not finite:
-        return f'<div class="chart-empty">داده‌ای برای «{_esc(title)}» نیست</div>'
+        return f'<div class="chart-empty">No data for "{_esc(title)}"</div>'
     vmax = max(finite)
     ticks = _nice_ticks(0, vmax * 1.08, 4)
     top = ticks[-1] or 1.0
@@ -203,7 +198,7 @@ def grouped_bars(title: str, groups: list[str], series: list[str],
             f'<line class="grid" x1="{pad_l}" x2="{width - pad_r}" '
             f'y1="{yy:.1f}" y2="{yy:.1f}"/>'
             f'<text class="tick" x="{pad_l - 8}" y="{yy + 4:.1f}" '
-            f'text-anchor="end">{_ltr(f"{t:g}")}</text>'
+            f'text-anchor="end">{t:g}</text>'
         )
     parts.append(
         f'<line class="axis" x1="{pad_l}" x2="{width - pad_r}" '
@@ -216,12 +211,12 @@ def grouped_bars(title: str, groups: list[str], series: list[str],
         x0 = cx - total / 2
         for si, s in enumerate(series):
             v = values.get((g, s), float("nan"))
-            x = x0 + si * (bw + 2)          # فاصله‌ی ۲px بین میله‌های مجاور
+            x = x0 + si * (bw + 2)          # 2px gap between adjacent bars
             if not math.isfinite(v):
                 continue
             h = max(1.0, (v / top) * plot_h)
             yy = pad_t + plot_h - h
-            tip = f"{s} · {g}: {v:.2f}{unit}"
+            tip = f"{s} - {g}: {v:.2f}{unit}"
             label = f"{v:.1f}" if v < 20 else f"{v:.0f}"
             parts.append(
                 f'<g class="mark" tabindex="0" data-tip="{_esc(tip)}">'
@@ -241,7 +236,7 @@ def grouped_bars(title: str, groups: list[str], series: list[str],
         f'<span class="lg"><i style="background:var(--s{i % 8 + 1})"></i>'
         f'{_esc(s)}</span>' for i, s in enumerate(series)
     )
-    arrow = "کمتر بهتر ↓" if lower_better else "بیشتر بهتر ↑"
+    arrow = "lower is better" if lower_better else "higher is better"
     return (f'<figure class="fig"><figcaption>{_esc(title)} '
             f'<span class="hint">{arrow}</span></figcaption>'
             f'<div class="legend">{legend}</div>'
@@ -251,14 +246,15 @@ def grouped_bars(title: str, groups: list[str], series: list[str],
 def delta_chart(title: str, entries: list[dict], unit: str = " ms",
                 height_per_row: int = 34) -> str:
     """
-    نمودار اثر: اختلاف هر سرویس نسبت به خط‌پایه، با بازه اطمینان ۹۵٪.
-    رنگ وضعیت فقط همراه برچسب متنی به‌کار می‌رود، نه به‌تنهایی.
+    Effect chart: each service's difference from the baseline, with a 95%
+    confidence interval. Status colour always travels with a text label,
+    never on its own.
     """
     if not entries:
-        return '<div class="chart-empty">داده‌ی کافی برای مقایسه نیست</div>'
+        return '<div class="chart-empty">Not enough data to compare</div>'
 
-    pad_l, pad_r, pad_t, pad_b = 150, 120, 20, 34
-    width = 700
+    pad_l, pad_r, pad_t, pad_b = 150, 150, 20, 34
+    width = 760
     plot_w = width - pad_l - pad_r
     height = pad_t + pad_b + height_per_row * len(entries)
     plot_h = height - pad_t - pad_b
@@ -269,7 +265,7 @@ def delta_chart(title: str, entries: list[dict], unit: str = " ms",
             if math.isfinite(e[k]):
                 bounds.append(e[k])
     if not bounds:
-        return '<div class="chart-empty">داده‌ی کافی برای مقایسه نیست</div>'
+        return '<div class="chart-empty">Not enough data to compare</div>'
     span = max(abs(min(bounds)), abs(max(bounds))) * 1.25 or 1.0
     ticks = _nice_ticks(-span, span, 4)
     lo_t, hi_t = ticks[0], ticks[-1]
@@ -285,7 +281,7 @@ def delta_chart(title: str, entries: list[dict], unit: str = " ms",
             f'<line class="grid" x1="{xx:.1f}" x2="{xx:.1f}" '
             f'y1="{pad_t}" y2="{pad_t + plot_h}"/>'
             f'<text class="tick" x="{xx:.1f}" y="{height - 12}" '
-            f'text-anchor="middle">{_ltr(f"{t:g}")}</text>'
+            f'text-anchor="middle">{t:g}</text>'
         )
     x0 = x(0)
     parts.append(f'<line class="zero" x1="{x0:.1f}" x2="{x0:.1f}" '
@@ -295,17 +291,12 @@ def delta_chart(title: str, entries: list[dict], unit: str = " ms",
         cy = pad_t + height_per_row * i + height_per_row / 2
         if e["sig"]:
             colour = "var(--good)" if e["delta"] < 0 else "var(--critical)"
-            mark, word = ("▼", "بهتر") if e["delta"] < 0 else ("▲", "بدتر")
+            mark, word = ("▼", "better") if e["delta"] < 0 else ("▲", "worse")
         else:
             colour = "var(--muted)"
-            mark, word = "●", "بی‌تفاوت"
-        # عدد علامت‌دار داخل متن راست‌به‌چپ: بدون ایزوله، مرورگر «−۱۸.۴»
-        # را «۱۸.۴−» نشان می‌دهد. LRI…PDI جهت عدد را قفل می‌کند.
-        num = _ltr(f'{e["delta"]:+.2f}{unit}')
-        ci = _ltr(f'{e["lo"]:+.2f} … {e["hi"]:+.2f}')
-        short = _ltr(f'{e["delta"]:+.1f}')
-        tip = (f'{e["service"]} · {word} · اختلاف {num} '
-               f'· بازه اطمینان ۹۵٪ {ci}')
+            mark, word = "●", "no change"
+        tip = (f'{e["service"]}: {e["delta"]:+.2f}{unit} - {word} '
+               f'(95% CI {e["lo"]:+.2f} to {e["hi"]:+.2f})')
         parts.append(
             f'<g class="mark" tabindex="0" data-tip="{_esc(tip)}">'
             f'<text class="rlab" x="{pad_l - 12}" y="{cy + 4:.1f}" '
@@ -321,23 +312,23 @@ def delta_chart(title: str, entries: list[dict], unit: str = " ms",
             f'<circle cx="{x(e["delta"]):.1f}" cy="{cy:.1f}" r="5.5" '
             f'fill="{colour}" stroke="var(--surface)" stroke-width="2"/>'
             f'<text class="dlab" x="{width - pad_r + 10}" y="{cy + 4:.1f}" '
-            f'fill="{colour}">{mark} {short} · {word}</text>'
+            f'fill="{colour}">{mark} {e["delta"]:+.1f} {word}</text>'
             f'</g>'
         )
     parts.append("</svg>")
     return (f'<figure class="fig"><figcaption>{_esc(title)} '
-            f'<span class="hint">چپِ خط صفر = بهتر از خط‌پایه · '
-            f'میله = بازه اطمینان ۹۵٪</span></figcaption>'
+            f'<span class="hint">left of zero = better than baseline, '
+            f'bar = 95% confidence interval</span></figcaption>'
             f'{"".join(parts)}</figure>')
 
 
 def round_lines(title: str, series: dict[str, dict[int, float]],
                 unit: str = " ms", height: int = 240) -> str:
-    """روند متریک در طول راندها — نشان می‌دهد تست متناوب واقعاً چه دید."""
+    """Metric trend across rounds - shows what the interleaving saw."""
     if not series:
         return ""
-    pad_l, pad_r, pad_t, pad_b = 58, 18, 16, 40
-    width, plot_h = 700, height - pad_t - pad_b
+    pad_l, pad_r, pad_t, pad_b = 58, 90, 16, 40
+    width, plot_h = 760, height - pad_t - pad_b
     plot_w = width - pad_l - pad_r
 
     rounds = sorted({r for d in series.values() for r in d})
@@ -364,7 +355,7 @@ def round_lines(title: str, series: dict[str, dict[int, float]],
             f'<line class="grid" x1="{pad_l}" x2="{width - pad_r}" '
             f'y1="{yy:.1f}" y2="{yy:.1f}"/>'
             f'<text class="tick" x="{pad_l - 8}" y="{yy + 4:.1f}" '
-            f'text-anchor="end">{_ltr(f"{t:g}")}</text>')
+            f'text-anchor="end">{t:g}</text>')
     for r in rounds:
         parts.append(f'<text class="glab" x="{x(r):.1f}" '
                      f'y="{pad_t + plot_h + 18}" text-anchor="middle">'
@@ -383,7 +374,7 @@ def round_lines(title: str, series: dict[str, dict[int, float]],
         for (px, py), r in zip(pts, [r for r in rounds if r in d]):
             parts.append(
                 f'<g class="mark" tabindex="0" '
-                f'data-tip="{_esc(f"{name} · راند {r}: {d[r]:.2f}{unit}")}">'
+                f'data-tip="{_esc(f"{name} - round {r}: {d[r]:.2f}{unit}")}">'
                 f'<circle cx="{px:.1f}" cy="{py:.1f}" r="4" fill="{col}" '
                 f'stroke="var(--surface)" stroke-width="2"/></g>')
         lx, ly = pts[-1]
@@ -430,8 +421,7 @@ CSS = """
 }
 *{box-sizing:border-box}
 body{margin:0;background:var(--page);color:var(--ink);
-  font-family:system-ui,-apple-system,"Segoe UI",sans-serif;
-  direction:rtl;line-height:1.65}
+  font-family:system-ui,-apple-system,"Segoe UI",sans-serif;line-height:1.6}
 .wrap{max-width:1080px;margin:0 auto;padding:32px 16px 72px}
 h1{font-size:1.7rem;margin:0 0 4px}
 h2{font-size:1.2rem;margin:40px 0 4px;padding-top:20px;
@@ -448,13 +438,16 @@ p{color:var(--ink2);margin:6px 0 14px}
   border-radius:14px;padding:18px;margin:16px 0}
 table{width:100%;border-collapse:collapse;font-size:.88rem;
   font-variant-numeric:tabular-nums;margin:10px 0}
-th,td{padding:7px 9px;text-align:right;border-bottom:1px solid var(--border)}
+th,td{padding:7px 9px;text-align:left;border-bottom:1px solid var(--border)}
+td:not(.name){text-align:right}
 th{color:var(--muted);font-weight:600;font-size:.78rem;
   text-transform:uppercase;letter-spacing:.04em}
+th:not(:first-child){text-align:right}
 tbody tr:hover{background:color-mix(in oklab,var(--ink) 4%,transparent)}
-td.name{text-align:right;font-weight:600}
+table.txt th,table.txt td{text-align:left}
+td.name{font-weight:600}
 .swatch{display:inline-block;width:10px;height:10px;border-radius:3px;
-  margin-left:7px;vertical-align:middle}
+  margin-right:7px;vertical-align:middle}
 .good{color:var(--good);font-weight:650}
 .bad{color:var(--critical);font-weight:650}
 .warn{color:var(--serious);font-weight:650}
@@ -482,11 +475,12 @@ svg.chart{width:100%;height:auto;display:block;overflow:visible}
   border:1px dashed var(--border);border-radius:10px;text-align:center}
 #tip{position:fixed;pointer-events:none;opacity:0;transition:opacity .1s;
   background:var(--ink);color:var(--page);padding:6px 10px;
-  border-radius:7px;font-size:.78rem;z-index:99;max-width:280px;
+  border-radius:7px;font-size:.78rem;z-index:99;max-width:300px;
   font-variant-numeric:tabular-nums}
-.note{border-right:3px solid var(--warning);padding:10px 14px;
+.note{border-left:3px solid var(--warning);padding:10px 14px;
   background:color-mix(in oklab,var(--warning) 8%,transparent);
   border-radius:8px;margin:14px 0;font-size:.88rem;color:var(--ink2)}
+.note b{color:var(--ink)}
 .foot{margin-top:40px;color:var(--muted);font-size:.8rem}
 """
 
@@ -529,23 +523,24 @@ def build_report(rows: list[dict], baseline: str,
 
     body: list[str] = []
     body.append(f"""
-<h1>گزارش تست سرویس‌های کاهش پینگ</h1>
-<div class="sub">ساخته‌شده {time.strftime('%Y-%m-%d %H:%M')} ·
-خط‌پایه: <b>{_esc(baseline)}</b> · روش: A/B متناوب جفت‌شده در هر راند</div>
+<h1>Ping-reduction service test report</h1>
+<div class="sub">Generated {time.strftime('%Y-%m-%d %H:%M')} &middot;
+baseline: <b>{_esc(baseline)}</b> &middot;
+method: interleaved A/B, paired within each round</div>
 <div class="cards">
-  <div class="card"><div class="k">سرویس‌ها</div><div class="v">{len(svcs)}</div></div>
-  <div class="card"><div class="k">راندها</div><div class="v">{n_rounds}</div></div>
-  <div class="card"><div class="k">بلوک‌ها</div><div class="v">{n_blocks}</div></div>
-  <div class="card"><div class="k">نمونه‌ها</div><div class="v">{n_samples:,}</div></div>
-  <div class="card"><div class="k">مسیرها</div><div class="v">{len(all_routes)}</div></div>
+  <div class="card"><div class="k">services</div><div class="v">{len(svcs)}</div></div>
+  <div class="card"><div class="k">rounds</div><div class="v">{n_rounds}</div></div>
+  <div class="card"><div class="k">blocks</div><div class="v">{n_blocks}</div></div>
+  <div class="card"><div class="k">samples</div><div class="v">{n_samples:,}</div></div>
+  <div class="card"><div class="k">routes</div><div class="v">{len(all_routes)}</div></div>
 </div>""")
 
     # ---------------------------------------------------- verdict
     verdicts: list[str] = []
     for game in games:
         game_routes = [(g, rg) for g, rg in all_routes if g == game]
-        # مسیر اصلی = ریجنی که زیر خط‌پایه بهترین امتیاز را دارد،
-        # یعنی همان ریجنی که واقعاً رویش بازی می‌کنی.
+        # The primary route is the region with the best baseline score -
+        # that is, the one you would actually be playing on.
         best_route, best_score = None, -1.0
         for g, rg in game_routes:
             s = summarise(rows, g, rg, baseline)
@@ -558,7 +553,7 @@ def build_report(rows: list[dict], baseline: str,
 
         pr50 = per_round(rows, g, rg, "p50")
         prj = per_round(rows, g, rg, "jitter")
-        winner, winner_txt = None, "بدون تفاوت معنی‌دار نسبت به خط‌پایه"
+        winner, winner_txt = None, "no significant difference from baseline"
         best_gain = 0.0
         for s in others:
             c50 = compare_service(s, baseline, "p50", pr50)
@@ -567,23 +562,25 @@ def build_report(rows: list[dict], baseline: str,
             if c50 and c50.significant and c50.delta < 0:
                 gain += -c50.delta
             if cj and cj.significant and cj.delta < 0:
-                gain += -cj.delta * 2.0      # جیتر وزن دوبرابر
+                gain += -cj.delta * 2.0      # jitter counts double
             if gain > best_gain:
                 best_gain, winner = gain, s
         if winner:
-            winner_txt = f"<span class='good'>{_esc(winner)}</span> برنده است"
+            winner_txt = f"<span class='good'>{_esc(winner)}</span> wins"
         verdicts.append(
-            f'<tr><td class="name">{_esc(g)}</td><td>{_esc(rg)}</td>'
-            f'<td>{winner_txt}</td></tr>'
+            f'<tr><td class="name">{_esc(g)}</td>'
+            f'<td class="name">{_esc(rg)}</td>'
+            f'<td class="name">{winner_txt}</td></tr>'
         )
 
     body.append(f"""
-<h2>حکم نهایی</h2>
-<p>برای هر بازی، مسیر اصلی همان ریجنی است که زیر خط‌پایه بهترین امتیاز را
-دارد. «بدون تفاوت معنی‌دار» نتیجه‌ی معتبری است — یعنی سرویس برای آن مسیر
-ارزش پول را ندارد.</p>
-<div class="panel"><table>
-<thead><tr><th>بازی</th><th>مسیر اصلی</th><th>نتیجه</th></tr></thead>
+<h2>Verdict</h2>
+<p>For each game, the primary route is the region with the best baseline
+score - the one you would actually be playing on. "No significant
+difference" is a real result: it means the service is not worth its price
+on that route.</p>
+<div class="panel"><table class="txt">
+<thead><tr><th>Game</th><th>Primary route</th><th>Result</th></tr></thead>
 <tbody>{''.join(verdicts)}</tbody></table></div>""")
 
     # ---------------------------------------------------- per game
@@ -591,13 +588,13 @@ def build_report(rows: list[dict], baseline: str,
         game_routes = [rg for g, rg in all_routes if g == game]
         body.append(f"<h2>{_esc(game)}</h2>")
 
-        # جدول کامل (هم داده، هم table-view برای رنگ‌های کم‌کنتراست)
-        head = ("<tr><th>مسیر</th><th>سرویس</th><th>p50</th><th>p95</th>"
-                "<th>جیتر</th><th>اسپایک</th><th>لاس</th><th>برست</th>"
-                "<th>امتیاز</th><th>بلوک</th></tr>")
+        # Full table - both the data and the table-view relief
+        head = ("<tr><th>Route</th><th>Service</th><th>p50</th><th>p95</th>"
+                "<th>jitter</th><th>spike</th><th>loss</th><th>burst</th>"
+                "<th>score</th><th>blocks</th></tr>")
         trs: list[str] = []
         for rg in game_routes:
-            for si, s in enumerate(svcs):
+            for s in svcs:
                 d = summarise(rows, game, rg, s)
                 if not d:
                     continue
@@ -605,7 +602,7 @@ def build_report(rows: list[dict], baseline: str,
                 cls = "good" if sc >= 75 else ("warn" if sc >= 50 else "bad")
                 trs.append(
                     f'<tr><td class="name">{_esc(rg)}</td>'
-                    f'<td><span class="swatch" style="background:'
+                    f'<td class="name"><span class="swatch" style="background:'
                     f'var(--s{svcs.index(s) % 8 + 1})"></span>{_esc(s)}</td>'
                     f'<td>{d["p50"]:.1f}</td><td>{d["p95"]:.1f}</td>'
                     f'<td>{d["jitter"]:.2f}</td><td>{d["spike"]:.1f}</td>'
@@ -616,7 +613,7 @@ def build_report(rows: list[dict], baseline: str,
         body.append(f'<div class="panel"><table><thead>{head}</thead>'
                     f'<tbody>{"".join(trs)}</tbody></table></div>')
 
-        # نمودار میله‌ای: پینگ و جیتر
+        # Bar charts: ping and jitter
         for metric, unit, lower in (("p50", " ms", True),
                                     ("jitter", " ms", True)):
             vals = {}
@@ -626,10 +623,10 @@ def build_report(rows: list[dict], baseline: str,
                     if d:
                         vals[(rg, s)] = d[metric]
             body.append('<div class="panel">' + grouped_bars(
-                f"{METRIC_LABEL[metric]} — {game}", game_routes, svcs,
+                f"{METRIC_LABEL[metric]} - {game}", game_routes, svcs,
                 vals, unit, lower) + "</div>")
 
-        # نمودار اثر + روند، برای هر مسیر
+        # Effect chart and trend, per route
         for rg in game_routes:
             pr50 = per_round(rows, game, rg, "p50")
             prj = per_round(rows, game, rg, "jitter")
@@ -646,40 +643,41 @@ def build_report(rows: list[dict], baseline: str,
                                     "n": c.n_pairs})
                 if entries:
                     body.append('<div class="panel">' + delta_chart(
-                        f"اثر روی {METRIC_LABEL[metric]} — "
-                        f"{game} / {rg} (نسبت به {baseline})",
+                        f"Effect on {METRIC_LABEL[metric]} - "
+                        f"{game} / {rg} (vs {baseline})",
                         entries, unit) + "</div>")
             if pr50:
                 body.append('<div class="panel">' + round_lines(
-                    f"روند میانه پینگ در راندها — {game} / {rg}",
+                    f"Median ping across rounds - {game} / {rg}",
                     pr50) + "</div>")
 
     # ---------------------------------------------------- caveats
     body.append("""
-<h2>محدودیت‌هایی که باید بدانی</h2>
+<h2>What these numbers cannot tell you</h2>
 <div class="note">
-<b>۱.</b> پروب TCP/ICMP دقیقاً ترافیک بازی نیست. بعضی سرورها آن را
-drop یا rate-limit می‌کنند؛ عدد می‌تواند کمی خوش‌بینانه‌تر یا
-بدبینانه‌تر از واقعیت باشد.<br>
-<b>۲.</b> اگر سرویس کاهش پینگ split-tunnel باشد و فقط پروسه‌ی بازی را
-از تونل رد کند، این ابزار ممکن است اصلاً از تونل عبور نکرده باشد.
-حتماً یک‌بار با حالت full-tunnel یا با افزودن دستی پروسه‌ی پایتون به
-سرویس، صحت را بررسی کن.<br>
-<b>۳.</b> این اعداد فقط برای <i>خط تو، در همین ساعت‌ها</i> معتبرند.
-برای حکم کامل، یک اجرا در ساعت پیک و یک اجرا در آف‌پیک لازم است.<br>
-<b>۴.</b> tickrate سرور و lag compensation اندازه‌گیری نمی‌شوند —
-چیزی که حین گیم حس می‌کنی فقط شبکه نیست.<br>
-<b>۵.</b> عدد پینگ داخل خود بازی ground truth است. بعد از این گزارش،
-یک مچ با برنده و یک مچ بدون آن بازی کن و مقایسه کن.
+<b>1.</b> A TCP/ICMP probe is not literally game traffic. Some servers
+drop or rate-limit it, so the figure can be slightly optimistic or
+pessimistic.<br>
+<b>2.</b> If your ping-reduction service uses split tunnelling and only
+routes the game process, this tool may never have gone through the tunnel
+at all. Verify once with full-tunnel mode, or by adding the Python
+executable to the service's process list.<br>
+<b>3.</b> These numbers are valid for <i>your line, at these hours</i>
+only. A full verdict needs one run at peak and one off-peak.<br>
+<b>4.</b> Server tickrate and lag compensation are not measured - what you
+feel in game is not only the network.<br>
+<b>5.</b> The in-game ping counter is the ground truth. After reading this
+report, play one match with the winner and one without, and compare.
 </div>
-<p class="foot">ساخته‌شده با pingmon · تحلیل: بوت‌استرپ جفت‌شده
-(۴۰۰۰ بازنمونه، بازه اطمینان ۹۵٪) روی میانه‌ی بلوک‌ها ·
-پالت رنگ اعتبارسنجی‌شده برای کوررنگی در هر دو حالت روشن و تیره.</p>""")
+<p class="foot">Built with pingmon &middot; analysis: paired bootstrap
+(4000 resamples, 95% confidence interval) over block medians &middot;
+colour palette validated for colour-vision deficiency in both light and
+dark mode.</p>""")
 
     return f"""<!doctype html>
-<html lang="fa" dir="rtl"><head><meta charset="utf-8">
+<html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>گزارش pingmon</title><style>{CSS}</style></head>
+<title>pingmon report</title><style>{CSS}</style></head>
 <body><div id="tip"></div><div class="wrap">{''.join(body)}</div>
 <script>{JS}</script></body></html>"""
 

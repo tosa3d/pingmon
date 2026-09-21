@@ -1,8 +1,9 @@
 """
-dashboard.py — مانیتورینگ زنده‌ی ترمینال
+dashboard.py - live terminal monitoring
 
-سرتیترها و نام متریک‌ها عمداً انگلیسی‌اند: متن راست‌به‌چپ داخل جدول
-ترمینال، چینش ستون‌ها را به‌هم می‌ریزد. راهنماها و پیام‌ها فارسی‌اند.
+Everything here is English on purpose: the Windows console does no
+bidirectional reshaping, so right-to-left text comes out reversed and
+breaks column alignment.
 """
 
 from __future__ import annotations
@@ -33,22 +34,22 @@ STYLE = {
 
 
 def sparkline(values: list[float], width: int = 28) -> Text:
-    """نمودار خطی فشرده. مقدار NaN (بسته‌ی گم‌شده) با × قرمز."""
+    """Compact trend line. NaN (a lost packet) shows as a red x."""
     vals = values[-width:]
     if not vals:
-        return Text("—", style="dim")
+        return Text("-", style="dim")
     finite = [v for v in vals if not math.isnan(v)]
     if not finite:
-        return Text("×" * len(vals), style="bold red")
+        return Text("x" * len(vals), style="bold red")
     lo, hi = min(finite), max(finite)
     rng = (hi - lo) or 1.0
     out = Text()
     for v in vals:
         if math.isnan(v):
-            out.append("×", style="bold red")
+            out.append("x", style="bold red")
             continue
         idx = int((v - lo) / rng * (len(SPARK) - 1))
-        # رنگ نسبت به میانه‌ی همین پنجره
+        # colour relative to this window's own range
         style = "green" if v <= lo + rng * 0.4 else (
             "yellow" if v <= lo + rng * 0.75 else "red")
         out.append(SPARK[idx], style=style)
@@ -58,13 +59,13 @@ def sparkline(values: list[float], width: int = 28) -> Text:
 def fmt(value: float, metric: str, digits: int = 1,
         suffix: str = "") -> Text:
     if value is None or math.isnan(value):
-        return Text("—", style="dim")
+        return Text("-", style="dim")
     return Text(f"{value:.{digits}f}{suffix}",
                 style=STYLE[rate(metric, value)])
 
 
 class Dashboard:
-    """هوک‌هایی که Session صدا می‌زند + رندر زنده."""
+    """Hooks the Session calls, plus the live rendering."""
 
     def __init__(self, session_ref_getter, refresh: float = 4.0) -> None:
         self._get = session_ref_getter    # () -> Session
@@ -73,7 +74,7 @@ class Dashboard:
         self.logs: deque[str] = deque(maxlen=6)
         self.round_idx = 0
         self.total_rounds = 0
-        self.service = "—"
+        self.service = "-"
         self.phase = "idle"               # settle | measure | waiting
         self.remaining = 0.0
         self.phase_total = 1.0
@@ -98,7 +99,7 @@ class Dashboard:
         self.blocks_done += 1
         if results:
             best = max(results, key=lambda r: r.metrics.score)
-            self.log(f"بلوک تمام شد · {svc.name} · بهترین: "
+            self.log(f"block done - {svc.name} - best: "
                      f"{best.game}/{best.region} score={best.metrics.score}")
 
     def tick(self, remaining: float, measuring: bool) -> None:
@@ -111,15 +112,15 @@ class Dashboard:
         self._render()
 
     def prompt(self, text: str) -> None:
-        """توقف نمایش زنده، گرفتن تایید کاربر، ادامه."""
+        """Pause the live view, get the user's confirmation, resume."""
         if self.live:
             self.live.stop()
-        self.console.rule("[bold yellow]اقدام لازم")
+        self.console.rule("[bold yellow]ACTION NEEDED")
         self.console.print(Panel(
             Align.center(Text(text, style="bold white")),
             border_style="yellow",
-            title="سرویس را عوض کن",
-            subtitle="بعد Enter بزن",
+            title="Switch service",
+            subtitle="then press Enter",
         ))
         try:
             input()
@@ -130,19 +131,18 @@ class Dashboard:
 
     # ---------------------------------------------------- render
     def _header(self) -> Panel:
-        sess = self._get()
         elapsed = time.time() - self.started
-        phase_fa = {"settle": "نشست (داده دور ریخته می‌شود)",
-                    "measure": "در حال اندازه‌گیری",
-                    "waiting": "منتظر تغییر سرویس",
-                    "idle": "آماده"}[self.phase]
+        phase_label = {"settle": "settling (data discarded)",
+                       "measure": "measuring",
+                       "waiting": "waiting for service switch",
+                       "idle": "ready"}[self.phase]
         colour = {"settle": "yellow", "measure": "green",
                   "waiting": "magenta", "idle": "dim"}[self.phase]
 
         done = max(0.0, min(1.0, 1 - self.remaining / self.phase_total))
         bar = ProgressBar(total=1.0, completed=done, complete_style=colour)
 
-        # هدر تک‌خطی: روی ترمینال ۲۴ خطی هم جا برای ردیف‌های جدول بماند.
+        # Single-line header so the table still fits on a 24-line terminal.
         line = Table.grid(padding=(0, 2), expand=True)
         for _ in range(6):
             line.add_column(justify="left")
@@ -151,7 +151,7 @@ class Dashboard:
                           (self.service, "bold cyan")),
             Text.assemble(("round ", "dim"),
                           (f"{self.round_idx}/{self.total_rounds}", "bold")),
-            Text.assemble(("", "dim"), (phase_fa, colour)),
+            Text(phase_label, style=colour),
             Text.assemble(("left ", "dim"),
                           (f"{self.remaining:.0f}s", "bold")),
             Text.assemble(("blocks ", "dim"), (str(self.blocks_done), "bold")),
@@ -159,7 +159,7 @@ class Dashboard:
                           (time.strftime("%H:%M:%S", time.gmtime(elapsed)),
                            "bold")),
         )
-        return Panel(Group(line, bar), title="pingmon — مانیتور زنده",
+        return Panel(Group(line, bar), title="pingmon - live monitor",
                      border_style=colour, padding=(0, 1))
 
     def _table(self) -> Panel:
@@ -201,25 +201,25 @@ class Dashboard:
                 Text(f"{m.score:.0f}", style=score_style),
                 sparkline(sess.store.live_series(t, 28)),
             )
-        return Panel(tbl, title="مقصدها (پنجره‌ی ۱۲۰ پروب اخیر)",
+        return Panel(tbl, title="targets (rolling window of 120 probes)",
                      border_style="blue")
 
     def _footer(self) -> Panel:
-        lines = list(self.logs)[-3:] or ["—"]
+        lines = list(self.logs)[-3:] or ["-"]
         body = Group(*[Text(l, style="dim", overflow="ellipsis",
                             no_wrap=True) for l in lines])
         legend = Text(
-            "سبز = خوب · زرد = قابل‌قبول · قرمز = بد · "
-            "× = بسته‌ی گم‌شده · brst = طولانی‌ترین رشته‌ی گم‌شدن",
+            "green = good | yellow = acceptable | red = bad | "
+            "x = lost packet | brst = longest consecutive-loss run",
             style="dim italic", overflow="ellipsis", no_wrap=True)
         return Panel(Group(body, legend), border_style="grey35",
-                     title="رویدادها", padding=(0, 1))
+                     title="events", padding=(0, 1))
 
     def _layout(self) -> Layout:
         lay = Layout()
         lay.split_column(
             Layout(self._header(), size=4),
-            # جدول باید همیشه بزرگ‌ترین سهم را بگیرد — داده مهم‌تر از chrome.
+            # The table always gets the biggest share - data beats chrome.
             Layout(self._table(), ratio=1, minimum_size=6),
             Layout(self._footer(), size=6),
         )

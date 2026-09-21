@@ -1,16 +1,16 @@
 """
-probe.py — موتور اندازه‌گیری
+probe.py - the measurement engine
 
-سه روش پروب:
-  tcp  — زمان دست‌دادن TCP (یک RTT کامل). بدون نیاز به دسترسی ادمین.
-         پیش‌فرض، و روی ویندوز و لینوکس یکسان کار می‌کند.
-  icmp — ping خام. نزدیک‌ترین چیز به ترافیک بازی، ولی نیاز به ادمین/root
-         دارد و بعضی سرورها ICMP را drop یا rate-limit می‌کنند.
-  a2s  — کوئری Source engine روی UDP. فقط برای سرورهای Source/GoldSrc.
+Three probe methods:
+  tcp  - TCP handshake time (one full RTT). Needs no admin rights and
+         behaves the same on Windows and Linux. This is the default.
+  icmp - raw ping. Closest thing to game traffic, but needs admin/root
+         and some servers drop or rate-limit ICMP.
+  a2s  - Source engine query over UDP. Source/GoldSrc servers only.
 
-نکته‌ی مهم: در روش tcp، پاسخ «connection refused» هم یک اندازه‌گیری
-معتبر است — یعنی SYN رسید و RST برگشت، دقیقاً یک RTT. پس آن را موفق
-حساب می‌کنیم نه گم‌شده.
+Worth knowing: with tcp, a "connection refused" reply is still a valid
+measurement - the SYN arrived and an RST came back, exactly one RTT. So
+we count it as a success, not as a lost packet.
 """
 
 from __future__ import annotations
@@ -43,8 +43,8 @@ def probe_tcp(ip: str, port: int, timeout: float = 2.0) -> Sample:
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     try:
         s.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
-        # RST به جای FIN هنگام بستن: جلوی انباشت TIME_WAIT و
-        # تمام‌شدن پورت‌های ephemeral در اجرای چندساعته را می‌گیرد.
+        # Send RST instead of FIN on close: stops TIME_WAIT from piling
+        # up and exhausting ephemeral ports during a multi-hour run.
         s.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER,
                      struct.pack("ii", 1, 0))
         s.settimeout(timeout)
@@ -52,7 +52,7 @@ def probe_tcp(ip: str, port: int, timeout: float = 2.0) -> Sample:
         try:
             s.connect((ip, port))
         except ConnectionRefusedError:
-            # RST برگشت ⇒ مسیر رفت‌وبرگشت کامل شد. اندازه‌گیری معتبر است.
+            # An RST came back, so the round trip completed. Valid sample.
             pass
         rtt = (time.perf_counter() - t0) * 1000.0
         return Sample(time.time(), 0, rtt, True)
@@ -82,7 +82,7 @@ def _icmp_checksum(data: bytes) -> int:
 
 
 class IcmpProber:
-    """پروب ICMP. نیاز به ادمین (ویندوز) یا root/CAP_NET_RAW (لینوکس)."""
+    """ICMP probe. Needs admin (Windows) or root/CAP_NET_RAW (Linux)."""
 
     def __init__(self) -> None:
         self.ident = os.getpid() & 0xFFFF
@@ -158,7 +158,7 @@ def probe_a2s(ip: str, port: int, timeout: float = 2.0) -> Sample:
         s.sendto(A2S_INFO, (ip, port))
         payload, _ = s.recvfrom(4096)
         rtt = (time.perf_counter() - t0) * 1000.0
-        # پاسخ challenge (0x41) هم یک RTT کامل است.
+        # A challenge reply (0x41) is also a complete round trip.
         if payload[:4] == b"\xFF\xFF\xFF\xFF":
             return Sample(time.time(), 0, rtt, True)
         return Sample(time.time(), 0, rtt, True, "unexpected")
@@ -175,8 +175,8 @@ def probe_a2s(ip: str, port: int, timeout: float = 2.0) -> Sample:
 
 class TargetProbeThread(threading.Thread):
     """
-    یک ترد به ازای هر مقصد. با نرخ ثابت پروب می‌زند و نمونه‌ها را
-    در صف می‌ریزد. نرخ ثابت برای اندازه‌گیری jitter حیاتی است.
+    One thread per target. Probes at a fixed rate and pushes samples to
+    the store. A steady rate is essential for jitter to mean anything.
     """
 
     def __init__(self, target: Target, rate_hz: float, timeout: float,
@@ -189,7 +189,7 @@ class TargetProbeThread(threading.Thread):
         self.icmp = icmp
         self._stopping = threading.Event()
         self._paused = threading.Event()
-        self._paused.set()      # set = در حال اجرا
+        self._paused.set()      # set = running
         self.seq = 0
 
     def pause(self) -> None:
@@ -224,12 +224,12 @@ class TargetProbeThread(threading.Thread):
             sample.seq = self.seq
             try:
                 self.on_sample(self.target, sample)
-            except Exception:       # noqa: BLE001 — یک نمونه نباید ترد را بکشد
+            except Exception:       # noqa: BLE001 - one bad sample must not kill the thread
                 pass
             next_at += self.interval
             sleep_for = next_at - time.perf_counter()
             if sleep_for < -self.interval * 5:
-                # خیلی عقب افتادیم (مثلاً بعد از یک سری timeout) — ریست
+                # We fell far behind (e.g. a run of timeouts) - resync
                 next_at = time.perf_counter()
                 sleep_for = 0.0
             if sleep_for > 0:

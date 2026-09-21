@@ -1,9 +1,10 @@
-# خروجی اجراها — داده‌ی خام تست، نباید وارد مخزن شود
+# Run output - raw test data, not for the repo
 pingmon-runs/
 *.csv
 report.html
+last-run.txt
 
-# کانفیگ شخصی (ممکن است نام سرویس‌ها و IP خصوصی داشته باشد)
+# Personal config (may contain service names and private IPs)
 pingmon.yaml
 
 # Python
@@ -17,7 +18,7 @@ env/
 .pytest_cache/
 .ruff_cache/
 
-# ویرایشگر و سیستم‌عامل
+# Editor and OS
 .vscode/*
 !.vscode/settings.json
 .idea/

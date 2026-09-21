@@ -1,17 +1,17 @@
 """
-stats.py — محاسبه‌ی متریک‌ها و تحلیل آماری
+stats.py - metrics and statistical analysis
 
-متریک‌هایی که واقعاً برای گیمینگ اهمیت دارند:
-  p50            میانه‌ی RTT — «پینگ معمولت»
-  p95 / p99      دُم توزیع — اسپایک‌هایی که حس می‌کنی
-  jitter (IPDV)  میانگین |اختلاف دو پینگ پشت‌سرهم|
-  spike          p99 − p50، ارتفاع پرش‌ها
-  loss           درصد بسته‌ی گم‌شده
-  burst          طولانی‌ترین رشته‌ی گم‌شدن پشت‌سرهم ← فریز واقعی
+The metrics that actually matter for gaming:
+  p50            median RTT - "your normal ping"
+  p95 / p99      the tail - the spikes you actually feel
+  jitter (IPDV)  mean |difference between consecutive pings|
+  spike          p99 - p50, how tall the jumps are
+  loss           percentage of lost packets
+  burst          longest run of consecutive losses -> a real freeze
 
-تحلیل: واحد تحلیل «بلوک» است نه «نمونه»، چون نمونه‌های داخل یک بلوک
-به‌شدت همبسته‌اند. مقایسه هم جفت‌شده در هر راند انجام می‌شود تا drift
-شبکه خنثی شود.
+Analysis note: the unit of analysis is the BLOCK, not the sample, because
+samples inside one block are heavily correlated. Comparisons are paired
+within each round so that network drift cancels out.
 """
 
 from __future__ import annotations
@@ -25,7 +25,7 @@ from dataclasses import dataclass, field
 
 
 def percentile(values: list[float], q: float) -> float:
-    """صدک با درون‌یابی خطی. q بین ۰ و ۱۰۰."""
+    """Linearly interpolated percentile. q is 0-100."""
     if not values:
         return float("nan")
     s = sorted(values)
@@ -40,7 +40,7 @@ def percentile(values: list[float], q: float) -> float:
 
 
 def ipdv_jitter(rtts: list[float]) -> float:
-    """میانگین قدرمطلق اختلاف پینگ‌های متوالی (IPDV)."""
+    """Mean absolute difference between consecutive pings (IPDV)."""
     if len(rtts) < 2:
         return float("nan")
     diffs = [abs(rtts[i] - rtts[i - 1]) for i in range(1, len(rtts))]
@@ -48,7 +48,7 @@ def ipdv_jitter(rtts: list[float]) -> float:
 
 
 def rfc3550_jitter(rtts: list[float]) -> float:
-    """جیتر هموارشده به سبک RFC 3550 — به اسپایک‌های تکی کمتر واکنش می‌دهد."""
+    """RFC 3550 style smoothed jitter - less reactive to single spikes."""
     if len(rtts) < 2:
         return float("nan")
     j = 0.0
@@ -59,7 +59,7 @@ def rfc3550_jitter(rtts: list[float]) -> float:
 
 
 def loss_runs(flags: list[bool]) -> list[int]:
-    """طول رشته‌های گم‌شدن پشت‌سرهم. flags: True یعنی موفق."""
+    """Lengths of consecutive-loss runs. In flags, True means success."""
     runs: list[int] = []
     cur = 0
     for ok in flags:
@@ -128,8 +128,9 @@ def compute(rtts: list[float], flags: list[bool],
 
 # ---------------------------------------------------------------- score
 
-#: وزن‌دهی بر اساس ژانر. در FPS رقابتی، jitter و burst-loss از میانگین
-#: پینگ مهم‌ترند؛ در MOBA/MMO که lag compensation قوی‌تر است، برعکس.
+#: Weighting by genre. In competitive FPS, jitter and burst loss matter
+#: more than average ping; in MOBA/MMO, where lag compensation is
+#: stronger, it is the other way round.
 GENRE_WEIGHTS = {
     "fps":  {"lat": 0.80, "jit": 1.40, "spk": 1.20, "loss": 1.15, "burst": 1.40},
     "moba": {"lat": 1.30, "jit": 0.85, "spk": 1.00, "loss": 1.00, "burst": 0.90},
@@ -142,8 +143,9 @@ def _clamp(v: float, lo: float, hi: float) -> float:
 
 def game_score(m: Metrics, genre: str = "fps") -> float:
     """
-    امتیاز ۰ تا ۱۰۰ برای «چقدر این مسیر برای بازی خوب است».
-    صرفاً برای رتبه‌بندی نسبی سرویس‌هاست، نه یک عدد مطلق استاندارد.
+    A 0-100 score for "how good is this route for gaming".
+    It exists to rank services relative to each other, not as an
+    absolute standard number.
     """
     w = GENRE_WEIGHTS.get(genre, GENRE_WEIGHTS["fps"])
     if math.isnan(m.p50):
@@ -163,7 +165,7 @@ def game_score(m: Metrics, genre: str = "fps") -> float:
 
 
 def rate(metric: str, value: float) -> str:
-    """برچسب کیفی: good | ok | bad | ?"""
+    """Qualitative label: good | ok | bad | ?"""
     if value is None or (isinstance(value, float) and math.isnan(value)):
         return "?"
     table = {
@@ -191,7 +193,7 @@ class Comparison:
     service: str
     baseline: str
     metric: str
-    delta: float              # منفی = بهتر (برای پینگ/جیتر/لاس)
+    delta: float              # negative = better (for ping/jitter/loss)
     ci_low: float
     ci_high: float
     n_pairs: int
@@ -200,8 +202,8 @@ class Comparison:
     @property
     def verdict(self) -> str:
         if not self.significant:
-            return "بدون تفاوت معنی‌دار"
-        return "بهتر" if self.delta < 0 else "بدتر"
+            return "no significant difference"
+        return "better" if self.delta < 0 else "worse"
 
 
 def bootstrap_paired_diff(
@@ -211,9 +213,9 @@ def bootstrap_paired_diff(
     seed: int = 1234,
 ) -> tuple[float, float, float]:
     """
-    بوت‌استرپ روی اختلاف‌های جفت‌شده.
-    pairs: لیست (مقدار سرویس، مقدار خط‌پایه) — هر جفت از یک راند.
-    خروجی: (میانگین اختلاف، کران پایین، کران بالای بازه اطمینان)
+    Bootstrap over paired differences.
+    pairs: list of (service value, baseline value), one pair per round.
+    Returns (mean difference, CI low, CI high).
     """
     diffs = [a - b for a, b in pairs
              if not (math.isnan(a) or math.isnan(b))]
@@ -243,7 +245,7 @@ def compare_service(
 ) -> Comparison | None:
     """
     per_round: {service_name: {round_index: metric_value}}
-    فقط راندهایی که هر دو سرویس در آن‌ها داده دارند استفاده می‌شوند.
+    Only rounds where both services have data are used.
     """
     a = per_round.get(service) or {}
     b = per_round.get(baseline) or {}

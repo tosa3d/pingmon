@@ -1,16 +1,18 @@
 """
-session.py — زمان‌بند A/B متناوب و جمع‌آوری داده
+session.py - the interleaved A/B scheduler and data collection
 
-طراحی کلیدی: تست **متناوب** است، نه متوالی.
-به‌جای «۱۰ دقیقه سرویس A بعد ۱۰ دقیقه B» (که در عمل نوسان شبکه را
-اندازه می‌گیرد نه سرویس را)، بلوک‌های کوتاه پشت‌سرهم می‌چرخند:
+The key design choice: the test is INTERLEAVED, not sequential.
 
-    راند ۱:  baseline → ExitLag → NoPing
-    راند ۲:  NoPing → baseline → ExitLag      (ترتیب تصادفی)
+Instead of "10 minutes of service A, then 10 minutes of B" - which in
+practice measures network drift rather than the service - short blocks
+rotate past each other:
+
+    round 1:  baseline -> ExitLag -> NoPing
+    round 2:  NoPing -> baseline -> ExitLag      (order randomised)
     ...
 
-بعد هر سرویس با خط‌پایه **در همان راند** مقایسه می‌شود، پس drift شبکه
-بین ساعت‌ها اثری روی نتیجه ندارد.
+Each service is then compared against the baseline FROM THE SAME ROUND,
+so drift between hours has no effect on the verdict.
 """
 
 from __future__ import annotations
@@ -40,12 +42,12 @@ class Service:
 
     def activate(self, log) -> None:
         if self.mode == "command" and self.up:
-            log(f"اجرای: {self.up}")
+            log(f"running: {self.up}")
             subprocess.run(self.up, shell=True, check=False)
 
     def deactivate(self, log) -> None:
         if self.mode == "command" and self.down:
-            log(f"اجرای: {self.down}")
+            log(f"running: {self.down}")
             subprocess.run(self.down, shell=True, check=False)
 
 
@@ -63,15 +65,15 @@ class BlockResult:
 
 
 class Store:
-    """نگهدارنده‌ی نمونه‌ها — هم برای داشبورد زنده، هم برای تحلیل نهایی."""
+    """Holds samples - for the live dashboard and the final analysis."""
 
     def __init__(self, window: int = 240) -> None:
         self.lock = threading.Lock()
-        # پنجره‌ی چرخان برای نمایش زنده
+        # rolling window for the live view
         self.live: dict[str, deque[Sample]] = defaultdict(
             lambda: deque(maxlen=window)
         )
-        # بافر بلوک جاری: target_key -> [Sample]
+        # current block buffer: target_key -> [Sample]
         self.block: dict[str, list[Sample]] = defaultdict(list)
         self.recording = False
         self.ctx_service = ""
@@ -180,7 +182,7 @@ class Session:
         self.services = services
         self.cfg = cfg
         self.store = Store()
-        self.hooks = hooks           # داشبورد یا None
+        self.hooks = hooks           # dashboard, or None
         self.threads: list[TargetProbeThread] = []
         self._abort = threading.Event()
         self.run_dir = cfg.outdir / time.strftime("run-%Y%m%d-%H%M%S")
@@ -193,11 +195,11 @@ class Session:
             print(msg, flush=True)
 
     def _await_manual(self, svc: Service) -> None:
-        text = svc.instruction or f"سرویس «{svc.name}» را الان فعال کن"
+        text = svc.instruction or f"Switch to '{svc.name}' now"
         if self.hooks and hasattr(self.hooks, "prompt"):
             self.hooks.prompt(text)
         else:
-            print(f"\n>>> {text}\n>>> بعد Enter بزن…", flush=True)
+            print(f"\n>>> {text}\n>>> then press Enter...", flush=True)
             try:
                 input()
             except EOFError:
@@ -208,13 +210,13 @@ class Session:
 
     # -------------------------------------------------- lifecycle
     def prepare(self) -> list[Target]:
-        """DNS را یک‌بار resolve می‌کند و مقصدهای مرده را کنار می‌گذارد."""
+        """Resolve DNS once and drop targets that do not resolve."""
         alive: list[Target] = []
         for t in self.targets:
             if t.ip or t.resolve():
                 alive.append(t)
             else:
-                self.log(f"[!] حذف شد (DNS ناموفق): {t.key} → {t.host}")
+                self.log(f"[!] dropped (DNS failed): {t.key} -> {t.host}")
         self.targets = alive
         return alive
 
@@ -222,7 +224,7 @@ class Session:
         icmp = IcmpProber() if any(t.method == "icmp" for t in self.targets) \
             else None
         if icmp and not IcmpProber.available():
-            self.log("[!] ICMP در دسترس نیست (نیاز به ادمین) — به TCP برگشتم")
+            self.log("[!] ICMP unavailable (needs admin) - falling back to TCP")
             for t in self.targets:
                 if t.method == "icmp":
                     t.method = "tcp"
@@ -245,11 +247,11 @@ class Session:
         self.store.open_raw(self.run_dir / "samples.csv")
         self.prepare()
         if not self.targets:
-            self.log("هیچ مقصد سالمی نمانده. کانفیگ را بررسی کن.")
+            self.log("No healthy targets left. Check your config.")
             return []
         self.start_probes()
-        self.log(f"شروع: {len(self.targets)} مقصد × "
-                 f"{len(self.services)} سرویس × {self.cfg.rounds} راند")
+        self.log(f"start: {len(self.targets)} targets x "
+                 f"{len(self.services)} services x {self.cfg.rounds} rounds")
 
         rng = random.Random(20260920)
         try:
@@ -278,8 +280,8 @@ class Session:
         else:
             svc.activate(self.log)
 
-        # فاز نشست: داده‌ی این بازه دور ریخته می‌شود تا اثر گذرای
-        # بالاآمدن تونل وارد اندازه‌گیری نشود.
+        # Settle phase: this data is thrown away so the transient of the
+        # tunnel coming up never enters the measurement.
         if self.hooks and hasattr(self.hooks, "on_settle"):
             self.hooks.on_settle(self.cfg.settle_seconds)
         self._sleep(self.cfg.settle_seconds)

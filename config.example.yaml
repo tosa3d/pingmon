@@ -1,66 +1,67 @@
 # ============================================================================
-# pingmon — کانفیگ
+# pingmon config
 #
-# دو چیز را اینجا تعریف می‌کنی:
-#   1) services — سرویس‌های کاهش پینگی که می‌خواهی مقایسه کنی
-#   2) games    — بازی‌ها و ریجن‌هایی که رویشان بازی می‌کنی
+# Two things go in here:
+#   1) services - the ping-reduction services you want to compare
+#   2) games    - the games and regions you actually play on
 #
-# endpoint های زیر در ۲۰۲۶-۰۹ تست و تایید شده‌اند. قبل از اجرای طولانی،
-# یک‌بار `pingmon validate` بزن تا مطمئن شوی از خط تو هم پاسخ می‌دهند.
+# The endpoints below were tested and verified 2026-09. Run
+# `pingmon validate` once before a long run to confirm they answer from
+# your own line too.
 # ============================================================================
 
 run:
-  block_seconds: 60        # طول هر بلوک اندازه‌گیری
-  settle_seconds: 8        # مکث بعد از عوض‌کردن سرویس (داده دور ریخته می‌شود)
-  rounds: 6                # هر سرویس چند بار تکرار شود — زیر ۴ نرو
-  rate_hz: 5               # پروب بر ثانیه به ازای هر مقصد
+  block_seconds: 60        # length of each measurement block
+  settle_seconds: 8        # pause after switching service (data discarded)
+  rounds: 6                # repeats per service - do not go below 4
+  rate_hz: 5               # probes per second, per target
   timeout: 2.0
-  randomize_order: true    # ترتیب سرویس‌ها در هر راند تصادفی شود
+  randomize_order: true    # shuffle service order within each round
   outdir: ./pingmon-runs
 
 # ---------------------------------------------------------------------------
-# سرویس‌ها
+# Services
 #
-# mode: manual   → ابزار مکث می‌کند و می‌گوید «الان X را روشن کن»، Enter می‌زنی
-# mode: command  → ابزار خودش دستور را اجرا می‌کند (برای WireGuard/OpenVPN)
+# mode: manual   -> the tool pauses and tells you to switch, you press Enter
+# mode: command  -> the tool runs the command itself (WireGuard/OpenVPN etc.)
 #
-# دقیقاً یکی باید baseline: true باشد.
+# Exactly one entry must have baseline: true.
 # ---------------------------------------------------------------------------
 services:
   - name: baseline
     mode: manual
     baseline: true
-    instruction: "همه‌ی سرویس‌های کاهش پینگ را کامل خاموش کن (اتصال مستقیم)"
+    instruction: "Turn OFF every ping-reduction service (direct connection)"
 
   - name: ExitLag
     mode: manual
-    instruction: "ExitLag را روشن کن و روی بازی موردنظر اعمالش کن"
+    instruction: "Turn ExitLag on and apply it to the game"
 
   - name: NoPing
     mode: manual
-    instruction: "ExitLag را ببند، NoPing را روشن کن"
+    instruction: "Close ExitLag, turn NoPing on"
 
-  # نمونه‌ی حالت خودکار — اگر تونلت CLI دارد:
+  # Automatic mode example, if your tunnel has a CLI:
   # - name: wg-frankfurt
   #   mode: command
   #   up:   "wg-quick up frankfurt"
   #   down: "wg-quick down frankfurt"
 
 # ---------------------------------------------------------------------------
-# بازی‌ها
+# Games
 #
-# genre روی وزن‌دهی امتیاز اثر می‌گذارد:
-#   fps  → jitter و burst-loss وزن بیشتری دارند
-#   moba → میانگین پینگ وزن بیشتری دارد
+# genre changes the score weighting:
+#   fps  -> jitter and burst loss weigh more
+#   moba -> average ping weighs more
 #
-# برای شروع، فقط ریجنی را که واقعاً رویش بازی می‌کنی فعال بگذار —
-# هرچه مقصد کمتر، نرخ پروب هر کدام بالاتر و داده تمیزتر.
+# Start with only the region you actually play on. Fewer targets means a
+# higher probe rate each and cleaner data.
 # ---------------------------------------------------------------------------
 games:
 
-  # ---- Rainbow Six Siege — روی Microsoft Azure ---------------------------
-  # اسم ریجن‌های R6 عیناً اسم ریجن‌های Azure است. ریجن فعلی‌ات را از
-  # داخل بازی ببین و فقط همان را (به‌علاوه یکی دو گزینه) فعال بگذار.
+  # ---- Rainbow Six Siege - on Microsoft Azure ---------------------------
+  # R6's in-game region names ARE Azure region names. Check which region
+  # you are on in game and enable that one (plus a couple of options).
   - name: r6
     enabled: true
     genre: fps
@@ -73,17 +74,17 @@ games:
       # - { region: "Qatar Central",  host: "qatarcentral.monitoring.azure.com" }
       # - { region: "UK South",       host: "uksouth.monitoring.azure.com" }
 
-  # ---- CS2 — Steam Datagram Relay ----------------------------------------
-  # IP رله‌های والو را با `pingmon sdr-refresh` بگیر و اینجا بچسبان.
-  # تا وقتی این کار را نکرده‌ای، این بازی را enabled: false بگذار.
+  # ---- CS2 - Steam Datagram Relay ----------------------------------------
+  # Get the Valve relay IPs with `pingmon sdr-refresh` and paste them here.
+  # Leave this game disabled until you have.
   - name: cs2
     enabled: false
     genre: fps
     method: tcp
     targets:
-      - { region: "fra", ip: "0.0.0.0", port: 27015, note: "با sdr-refresh پر کن" }
+      - { region: "fra", ip: "0.0.0.0", port: 27015, note: "fill via sdr-refresh" }
 
-  # ---- Apex Legends — Multiplay/i3D روی زیرساخت AWS ----------------------
+  # ---- Apex Legends - Multiplay/i3D on AWS -------------------------------
   - name: apex
     enabled: true
     genre: fps
@@ -94,25 +95,26 @@ games:
       # - { region: "London",    host: "dynamodb.eu-west-2.amazonaws.com" }
       # - { region: "Milan",     host: "dynamodb.eu-south-1.amazonaws.com" }
 
-  # ---- CoD Warzone — هاست مستندنشده --------------------------------------
-  # اینها تقریب خام‌اند. برای نتیجه‌ی قابل اتکا، وسط یک مچ
-  # `pingmon discover --game warzone` بزن و IP واقعی را اینجا بگذار.
+  # ---- CoD Warzone - undocumented hosting --------------------------------
+  # These are rough stand-ins. For a result you can rely on, run
+  # `pingmon discover --game warzone` mid-match and paste the real IP here.
   - name: warzone
     enabled: true
     genre: fps
     method: tcp
     targets:
-      - { region: "EU Frankfurt (تقریبی)", host: "dynamodb.eu-central-1.amazonaws.com" }
-      - { region: "EU Amsterdam (تقریبی)", host: "europe-west4-run.googleapis.com" }
+      - { region: "EU Frankfurt (approx)", host: "dynamodb.eu-central-1.amazonaws.com" }
+      - { region: "EU Amsterdam (approx)", host: "europe-west4-run.googleapis.com" }
 
   # ---- EA FC 26 -----------------------------------------------------------
-  # هشدار مهم: فقط مودهای سرور اختصاصی (Ultimate Team، Clubs، Rush، VOLTA)
-  # معنی دارند. مودهای Online Seasons و Friendlies نقطه‌به‌نقطه‌اند —
-  # هیچ سروری وسط نیست که مسیرش بهینه شود، پس تستشان بی‌معنی است.
+  # Important: only the dedicated-server modes (Ultimate Team, Clubs, Rush,
+  # VOLTA) are meaningful. Online Seasons and Friendlies are peer-to-peer -
+  # there is no server in the middle whose route could be optimised, so
+  # testing them is pointless.
   - name: fc26
     enabled: true
-    genre: moba          # lag compensation قوی‌تر ⇒ میانگین پینگ مهم‌تر
+    genre: moba          # stronger lag compensation -> average ping matters more
     method: tcp
     targets:
-      - { region: "EU West (تقریبی)",    host: "dynamodb.eu-west-1.amazonaws.com" }
-      - { region: "EU Central (تقریبی)", host: "dynamodb.eu-central-1.amazonaws.com" }
+      - { region: "EU West (approx)",    host: "dynamodb.eu-west-1.amazonaws.com" }
+      - { region: "EU Central (approx)", host: "dynamodb.eu-central-1.amazonaws.com" }

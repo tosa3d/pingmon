@@ -1,13 +1,13 @@
 """
-cli.py — نقطه ورود
+cli.py - entry point
 
-  pingmon init         ساخت فایل کانفیگ نمونه
-  pingmon validate     بررسی اینکه کدام مقصدها واقعاً پاسخ می‌دهند
-  pingmon sdr-refresh  گرفتن لیست زنده‌ی PoPهای Valve برای CS2
-  pingmon monitor      فقط مانیتورینگ زنده، بدون تست A/B
-  pingmon run          اجرای کامل تست A/B متناوب
-  pingmon discover     شکار IP واقعی سرور بازی (وسط مچ اجرا کن)
-  pingmon report DIR   ساخت دوباره‌ی گزارش از روی CSV
+  pingmon init         write an example config file
+  pingmon validate     check which targets actually respond
+  pingmon sdr-refresh  fetch the live Valve SDR relay list for CS2
+  pingmon monitor      live monitoring only, no A/B test
+  pingmon run          the full interleaved A/B test
+  pingmon discover     capture a game's real server IP (run mid-match)
+  pingmon report DIR   rebuild the HTML report from CSV
 """
 
 from __future__ import annotations
@@ -34,9 +34,9 @@ def load_config(path: Path) -> dict:
     try:
         import yaml
     except ImportError:
-        sys.exit("PyYAML نصب نیست:  pip install pyyaml rich")
+        sys.exit("PyYAML is not installed:  pip install pyyaml rich")
     if not path.exists():
-        sys.exit(f"کانفیگ پیدا نشد: {path}\nاول این را بزن:  pingmon init")
+        sys.exit(f"Config not found: {path}\nRun this first:  pingmon init")
     with path.open(encoding="utf-8") as fh:
         return yaml.safe_load(fh) or {}
 
@@ -53,7 +53,7 @@ def services_from_config(cfg: dict) -> list[Service]:
             is_baseline=bool(s.get("baseline", False)),
         ))
     if not out:
-        sys.exit("هیچ سرویسی در کانفیگ تعریف نشده.")
+        sys.exit("No services defined in the config.")
     if not any(s.is_baseline for s in out):
         out[0].is_baseline = True
     return out
@@ -80,23 +80,23 @@ def cmd_init(args) -> None:
     src = Path(__file__).parent.parent / "config.example.yaml"
     dst = Path(args.path or DEFAULT_CONFIG)
     if dst.exists() and not args.force:
-        sys.exit(f"{dst} از قبل هست. برای بازنویسی --force بزن.")
+        sys.exit(f"{dst} already exists. Use --force to overwrite.")
     dst.write_text(src.read_text(encoding="utf-8"), encoding="utf-8")
-    print(f"ساخته شد: {dst}\nبازش کن، سرویس‌هایت را بنویس، بعد:"
+    print(f"Created: {dst}\nOpen it, add your services, then run:"
           f"\n  pingmon validate\n  pingmon run")
 
 
 def cmd_validate(args) -> None:
     cfg = load_config(Path(args.config))
     targets = targets_from_config(cfg) or build_default_targets()
-    print(f"{'GAME':<9} {'REGION':<26} {'HOST':<38} {'IP':<16} {'RTT':>8}")
-    print("-" * 100)
+    print(f"{'GAME':<9} {'REGION':<26} {'HOST':<38} {'IP':<16} {'RTT':>9}")
+    print("-" * 101)
     ok = bad = 0
     for t in targets:
         ip = t.resolve()
         if not ip:
             print(f"{t.game:<9} {t.region[:25]:<26} {t.host[:37]:<38} "
-                  f"{'—':<16} {'DNS FAIL':>8}")
+                  f"{'-':<16} {'DNS FAIL':>9}")
             bad += 1
             continue
         best = None
@@ -107,27 +107,29 @@ def cmd_validate(args) -> None:
             time.sleep(0.12)
         if best is None:
             print(f"{t.game:<9} {t.region[:25]:<26} {t.host[:37]:<38} "
-                  f"{ip:<16} {'NO REPLY':>8}")
+                  f"{ip:<16} {'NO REPLY':>9}")
             bad += 1
         else:
             print(f"{t.game:<9} {t.region[:25]:<26} {t.host[:37]:<38} "
                   f"{ip:<16} {best:>7.1f}ms")
             ok += 1
-    print("-" * 100)
-    print(f"سالم: {ok}   خراب: {bad}")
+    print("-" * 101)
+    print(f"healthy: {ok}   broken: {bad}")
     if bad:
-        print("مقصدهای خراب را از کانفیگ بردار یا با IP دستی جایگزین کن.")
+        print("Remove the broken targets from your config, "
+              "or replace them with a manual IP.")
 
 
 def cmd_sdr_refresh(args) -> None:
-    print("در حال گرفتن کانفیگ Steam Datagram Relay از والو…")
+    print("Fetching the Steam Datagram Relay config from Valve...")
     try:
         pops = fetch_sdr_pops()
     except Exception as e:                     # noqa: BLE001
-        sys.exit(f"ناموفق: {e}\n"
-                 "اگر شبکه اجازه نمی‌دهد، IP رله را دستی در کانفیگ بگذار.")
-    print(f"{len(pops)} PoP پیدا شد.\n")
-    print("این بخش را در کانفیگ زیر بازی cs2 بگذار:\n")
+        sys.exit(f"Failed: {e}\n"
+                 "If your network blocks it, put a relay IP in the config "
+                 "by hand.")
+    print(f"Found {len(pops)} PoPs.\n")
+    print("Paste this under the cs2 game in your config:\n")
     print("    targets:")
     for code, ips in sorted(pops.items()):
         print(f"      - {{ region: \"{code}\", ip: \"{ips[0]}\", "
@@ -136,17 +138,20 @@ def cmd_sdr_refresh(args) -> None:
 
 def cmd_discover(args) -> None:
     from .discover import collect, rank
-    print(f"وسط مچ باش. {args.seconds} ثانیه نمونه‌برداری می‌کنم…")
+    print(f"Get into a live match. Sampling for {args.seconds} seconds...")
 
     def tick(i, n, found):
-        print(f"  [{i}/{n}] مقصد یکتا: {found}", end="\r", flush=True)
+        print(f"  [{i}/{n}] unique destinations: {found}", end="\r",
+              flush=True)
 
     eps = rank(collect(args.seconds, 2.0, args.game, tick))
     print(" " * 60, end="\r")
     if not eps:
-        print("چیزی پیدا نشد. مطمئن شو وسط مچ بودی و بازی اجراست.")
+        print("Nothing found. Make sure you were mid-match and the game "
+              "is running.")
         if args.game:
-            print("اگر نام پروسه فرق دارد، --game را بردار تا همه دیده شوند.")
+            print("If the process name differs, drop --game to see "
+                  "everything.")
         return
     print(f"\n{'PROTO':<6} {'IP':<17} {'PORT':>6} {'SEEN':>5}  PROCESS")
     print("-" * 66)
@@ -154,21 +159,21 @@ def cmd_discover(args) -> None:
         print(f"{e.proto:<6} {e.ip:<17} {e.port:>6} {e.count:>5}  {e.process}")
     print("-" * 66)
     top = eps[0]
-    print("\nمحتمل‌ترین سرور بازی — این را در کانفیگ بگذار:\n")
+    print("\nMost likely game server - put this in your config:\n")
     print(f"      - {{ region: \"discovered\", ip: \"{top.ip}\", "
-          f"port: {top.port}, note: \"کشف‌شده وسط مچ\" }}")
+          f"port: {top.port}, note: \"captured mid-match\" }}")
 
 
 def _build(cfg: dict) -> list[Target]:
     targets = targets_from_config(cfg)
     if not targets:
-        print("[!] کانفیگ مقصدی ندارد — از پیش‌فرض‌ها استفاده می‌کنم.")
+        print("[!] Config has no targets - using the built-in defaults.")
         targets = build_default_targets()
     return targets
 
 
 def cmd_monitor(args) -> None:
-    """فقط نگاه کردن: هیچ بلوک یا سرویسی، فقط متریک‌های زنده."""
+    """Watch only: no blocks, no services, just live metrics."""
     from .dashboard import Dashboard
     cfg = load_config(Path(args.config))
     targets = _build(cfg)
@@ -176,13 +181,13 @@ def cmd_monitor(args) -> None:
                    session_config(cfg, args))
     sess.prepare()
     if not sess.targets:
-        sys.exit("هیچ مقصد سالمی نیست.")
+        sys.exit("No healthy targets.")
     sess.start_probes()
     dash = Dashboard(lambda: sess)
-    dash.service = "مانیتور زنده"
+    dash.service = "live monitor"
     dash.phase = "measure"
     dash.phase_total = 1.0
-    dash.log("حالت مانیتور — Ctrl+C برای خروج")
+    dash.log("monitor mode - press Ctrl+C to stop")
     try:
         with dash:
             while True:
@@ -193,7 +198,7 @@ def cmd_monitor(args) -> None:
         pass
     finally:
         sess.stop_probes()
-    print("\nتمام.")
+    print("\nDone.")
 
 
 def cmd_run(args) -> None:
@@ -206,12 +211,13 @@ def cmd_run(args) -> None:
     total = scfg.rounds * len(services) * (scfg.block_seconds
                                            + scfg.settle_seconds)
     print(f"\npingmon {__version__}")
-    print(f"  مقصدها : {len(targets)}")
-    print(f"  سرویس‌ها: {', '.join(s.name for s in services)}")
-    print(f"  خط‌پایه : {baseline}")
-    print(f"  ساختار : {scfg.rounds} راند × {len(services)} بلوک "
-          f"× {scfg.block_seconds}s")
-    print(f"  زمان   : حدود {total // 60} دقیقه (بدون احتساب مکث‌های دستی)\n")
+    print(f"  targets  : {len(targets)}")
+    print(f"  services : {', '.join(s.name for s in services)}")
+    print(f"  baseline : {baseline}")
+    print(f"  structure: {scfg.rounds} rounds x {len(services)} blocks "
+          f"x {scfg.block_seconds}s")
+    print(f"  duration : about {total // 60} minutes "
+          f"(excluding manual pauses)\n")
 
     if args.dashboard:
         from .dashboard import Dashboard
@@ -225,7 +231,7 @@ def cmd_run(args) -> None:
         except KeyboardInterrupt:
             sess.abort()
             blocks = sess.store.blocks
-            print("\nمتوقف شد — تا همین‌جا گزارش می‌سازم.")
+            print("\nStopped - building a report from what we have.")
     else:
         sess = Session(targets, services, scfg)
         try:
@@ -235,27 +241,27 @@ def cmd_run(args) -> None:
             blocks = sess.store.blocks
 
     if not blocks:
-        print("هیچ داده‌ای جمع نشد.")
+        print("No data was collected.")
         return
     rows = blocks_from_session(blocks)
     out = write_report(rows, baseline, sess.run_dir / "report.html")
-    print(f"\nخروجی‌ها در: {sess.run_dir}")
-    print(f"  samples.csv  داده‌ی خام هر پروب")
-    print(f"  blocks.csv   خلاصه‌ی هر بلوک")
-    print(f"  report.html  گزارش نهایی  ←  {out}")
+    print(f"\nOutput in: {sess.run_dir}")
+    print(f"  samples.csv  raw data, every probe")
+    print(f"  blocks.csv   per-block summary")
+    print(f"  report.html  the final report  ->  {out}")
 
 
 def cmd_report(args) -> None:
     d = Path(args.dir)
     blocks_csv = d / "blocks.csv" if d.is_dir() else d
     if not blocks_csv.exists():
-        sys.exit(f"پیدا نشد: {blocks_csv}")
+        sys.exit(f"Not found: {blocks_csv}")
     rows = load_blocks(blocks_csv)
     if not rows:
-        sys.exit("فایل خالی است.")
+        sys.exit("The file is empty.")
     baseline = args.baseline or rows[0]["service"]
     out = write_report(rows, baseline, blocks_csv.parent / "report.html")
-    print(f"ساخته شد: {out}")
+    print(f"Created: {out}")
 
 
 # ---------------------------------------------------------------- parser
@@ -264,34 +270,35 @@ def cmd_report(args) -> None:
 def main(argv: list[str] | None = None) -> None:
     p = argparse.ArgumentParser(
         prog="pingmon",
-        description="تست و مانیتورینگ سرویس‌های کاهش پینگ، بازی‌به‌بازی")
+        description="Test and monitor ping-reduction services, "
+                    "game by game")
     p.add_argument("--version", action="version",
                    version=f"pingmon {__version__}")
     sub = p.add_subparsers(dest="cmd", required=True)
 
-    sp = sub.add_parser("init", help="ساخت کانفیگ نمونه")
+    sp = sub.add_parser("init", help="write an example config")
     sp.add_argument("--path", default=str(DEFAULT_CONFIG))
     sp.add_argument("--force", action="store_true")
     sp.set_defaults(func=cmd_init)
 
-    sp = sub.add_parser("validate", help="بررسی سلامت مقصدها")
+    sp = sub.add_parser("validate", help="check target health")
     sp.add_argument("-c", "--config", default=str(DEFAULT_CONFIG))
     sp.set_defaults(func=cmd_validate)
 
-    sp = sub.add_parser("sdr-refresh", help="گرفتن PoPهای Valve برای CS2")
+    sp = sub.add_parser("sdr-refresh", help="fetch Valve PoPs for CS2")
     sp.set_defaults(func=cmd_sdr_refresh)
 
-    sp = sub.add_parser("discover", help="شکار IP سرور بازی وسط مچ")
+    sp = sub.add_parser("discover", help="capture a game's real server IP")
     sp.add_argument("--game", choices=["r6", "cs2", "apex", "warzone",
                                        "fc26"], default=None)
     sp.add_argument("--seconds", type=int, default=20)
     sp.set_defaults(func=cmd_discover)
 
-    sp = sub.add_parser("monitor", help="مانیتورینگ زنده بدون تست")
+    sp = sub.add_parser("monitor", help="live monitoring, no test")
     sp.add_argument("-c", "--config", default=str(DEFAULT_CONFIG))
     sp.set_defaults(func=cmd_monitor)
 
-    sp = sub.add_parser("run", help="اجرای تست A/B متناوب")
+    sp = sub.add_parser("run", help="run the interleaved A/B test")
     sp.add_argument("-c", "--config", default=str(DEFAULT_CONFIG))
     sp.add_argument("--rounds", type=int, default=None)
     sp.add_argument("--block", type=int, default=None)
@@ -299,7 +306,7 @@ def main(argv: list[str] | None = None) -> None:
                     action="store_false", default=True)
     sp.set_defaults(func=cmd_run)
 
-    sp = sub.add_parser("report", help="ساخت دوباره‌ی گزارش از CSV")
+    sp = sub.add_parser("report", help="rebuild the report from CSV")
     sp.add_argument("dir")
     sp.add_argument("--baseline", default=None)
     sp.set_defaults(func=cmd_report)
